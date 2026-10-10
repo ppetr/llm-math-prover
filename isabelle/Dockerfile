@@ -20,6 +20,14 @@ USER isabelle
 WORKDIR /home/isabelle
 RUN Isabelle/bin/isabelle components -u /home/isabelle/afp/thys
 
+# Pre-build heap images at image-build time (isabelle build -b), not on
+# every container start: without this, a fresh container has to rebuild
+# HOL (and any AFP session) from scratch on first use, which was slow and
+# triggered intermittent "SQLITE_BUSY: database is locked" build-db errors
+# in testing. Example-Submission is AFP's small demo entry, built here only
+# to exercise AFP registration - it is not meant to pre-build AFP at large.
+RUN Isabelle/bin/isabelle build -b HOL Example-Submission
+
 # Documentation only - EXPOSE does not make a localhost-bound service
 # reachable from other containers, see the sidecar note above.
 EXPOSE 4443
