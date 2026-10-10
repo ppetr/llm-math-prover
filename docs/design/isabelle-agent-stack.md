@@ -80,6 +80,14 @@ hotovou odpověď.
 | `isabelle` | Isabelle/HOL + AFP | `isabelle server`, ověření důkazů, souběžné session per uživatel |
 | `ollama` *(později)* | Ollama | Lokální modely — stejné OpenAI-kompatibilní rozhraní, přidá se bez refaktoru |
 
+> **Oprava z Fáze 1 průzkumu:** `isabelle server` se váže jen na `localhost`
+> — je to vlastnost Isabelle (bezpečnostní omezení), ne naše volba, a nejde
+> ho zavolat přes jméno kontejneru po compose síti. Agent proto poběží s
+> `network_mode: "service:isabelle"` (sdílí network namespace s `isabelle`
+> kontejnerem jako sidecar) — z pohledu agenta je pak server dostupný na
+> `localhost:<port>`. Diagram a tok dat výše zůstávají platné, jen přenos
+> mezi agentem a Isabelle není přes docker síť, ale přes sdílený namespace.
+
 ## §3 Rozhodnutí z návrhu
 
 Pět voleb, které určují tvar zbytku systému.
@@ -174,6 +182,10 @@ Jeden `compose.yaml`, žádná enginu-specifická rozšíření.
   konfiguraci WebUI.
 - Jen `agent` má síťový přístup pro web search a stahování knihoven —
   Isabelle kontejner nemusí mít internet vůbec.
+- `isabelle server` je navíc vázaný jen na `localhost` sdíleného network
+  namespace s agentem (viz §2) — jeho port se nepublikuje ani do zbytku
+  stacku, ani na hostitele. Menší attack surface, než kdyby šlo o běžnou
+  síťovou službu.
 - Perzistentní stav (konverzace, stažené AFP entries, Isabelle heapy,
   výstupní artefakty z §5) ukládán per-uživatel od začátku:
   `data/<user_id>/…`, ne do jednoho sdíleného adresáře.
@@ -215,10 +227,10 @@ znovu projde jádrem (viz úvodní poznámka o LCF jádru).
 
 ## §10 Otevřené otázky
 
-- **isabelle-client (Python):** existuje balíček implementující protokol
-  `isabelle server`, ale jeho aktuální stav a kompatibilitu s konkrétní
-  verzí Isabelle je potřeba ověřit před spoléháním na něj — alternativa je
-  napsat tenký vlastní wrapper nad JSON/TCP protokolem.
+- **isabelle-client (Python):** ověřeno, že existuje a je aktivně udržovaný
+  ([inpefess/isabelle-client](https://github.com/inpefess/isabelle-client),
+  PyPI `isabelle-client`, ~1.1.1, Python 3.6+) — zbývá ověřit konkrétní
+  kompatibilitu s Isabelle2025-2 až při implementaci Fáze 2.
 - **Zdroj pro web search:** která search API/služba pro nástroj
   `web_search_proofs` — ovlivní náklady a rate limity.
 - **AFP indexace:** stačí statický index entries z isa-afp.org, nebo
