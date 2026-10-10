@@ -1,0 +1,44 @@
+services:
+  webui:
+    # Pin an exact tag before relying on this outside local experimentation.
+    image: ghcr.io/open-webui/open-webui:main
+    depends_on:
+      - llm-gateway
+    environment:
+      # NOTE: verify this env var against the Open WebUI version you pin -
+      # it has been renamed across releases (singular vs. OPENAI_API_BASE_URLS).
+      OPENAI_API_BASE_URL: http://llm-gateway:4000/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+    ports:
+      - "8080:8080"
+    volumes:
+      - webui-data:/app/backend/data
+    restart: unless-stopped
+
+  llm-gateway:
+    # Pin an exact tag before relying on this outside local experimentation.
+    image: ghcr.io/berriai/litellm:main-stable
+    command: ["--config", "/app/config.yaml"]
+    env_file:
+      - .env
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+{% if ollama_enabled %}
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+{% endif %}
+
+volumes:
+  webui-data:
+{% if ollama_enabled %}
+  ollama-data:
+{% endif %}

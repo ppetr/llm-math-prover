@@ -1,0 +1,13 @@
+model_list:
+{% for b in cloud_backends %}
+  - model_name: {{ b.name }}
+    litellm_params:
+      model: {{ b.litellm_model }}
+      api_key: os.environ/{{ b.api_key_env }}
+{% endfor %}
+{% if ollama_enabled %}
+  - model_name: ollama
+    litellm_params:
+      model: ollama/{{ ollama_model }}
+      api_base: http://ollama:11434
+{% endif %}
