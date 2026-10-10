@@ -12,34 +12,35 @@ sidecar, per the design doc's §2 networking note.
 
 ```sh
 docker build -t isabelle-afp isabelle/
+# or: podman build -t isabelle-afp isabelle/
 ```
 
 This downloads ~70 MB (AFP) on top of the base Isabelle image and can take a
-while the first time. Not run yet in this environment - no outbound network
-access to Docker Hub / isa-afp.org here, so the build itself is unverified
-beyond a manual review of the Dockerfile. Run it somewhere with network
-access and report back if anything in it is wrong.
+while the first time. Verified working with Docker (2026-10-10).
 
-## Manual smoke test (Fáze 1 goal)
+## Manual smoke test (Fáze 1 goal) - verified
 
 ```sh
 docker run --rm -d --name isabelle-afp isabelle-afp
-docker exec -it isabelle-afp Isabelle/bin/isabelle client
+docker exec -it isabelle-afp Isabelle/bin/isabelle client -n agent
 ```
 
-The second command should connect to the server started by the entrypoint
-and drop into an interactive prompt. From there:
+The `-n agent` matters: `isabelle client` defaults to looking for a server
+named `isabelle`, but the entrypoint starts the server as `-n agent` (see
+`Dockerfile`). Without a matching `-n`, the client fails with
+`*** Isabelle server "isabelle" not running`.
+
+Confirmed output: the client connects, prints the server's address/password,
+then
 
 ```json
 session_start {"session": "HOL"}
 ```
 
-should return `OK`/`FINISHED` with a session ID, confirming the server is up
-and HOL loaded. To confirm AFP registration, try starting a session that
-depends on an AFP entry, e.g. `session_start {"session": "Example-Submission"}`
-(or any other AFP session name).
+returns `OK` with a task id, streams `NOTE` progress messages while loading
+`Pure`/`HOL`, and ends with `FINISHED` and a session id - the server and base
+HOL both work.
 
-The exact flags `isabelle client` expects given the server was started with
-explicit `-n agent -p 4443` are **not verified yet** - check
-`Isabelle/bin/isabelle client -?` inside the container first. If it doesn't
-connect by default, pass matching `-n`/`-p` to the client call.
+Still to confirm: that AFP is actually registered. Try a session that
+depends on an AFP entry, e.g. `session_start {"session": "Example-Submission"}`
+(or any other AFP session name), in the same client prompt.
