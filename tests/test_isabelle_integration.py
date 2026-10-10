@@ -8,16 +8,14 @@ Requires Docker (or Podman aliased as `docker`) and a pre-built image:
 Skips automatically when Docker or the image isn't available, so a plain
 `pytest` run stays fast and offline.
 
-Known environment issue (found 2026-10-11, not yet resolved): `session_start`
-can stall indefinitely at "Starting session HOL ..." with ~0% CPU, even
-though the image pre-builds and loads the Pure/HOL heap (confirmed via
-`docker top`) rather than rebuilding it. Also seen once as a hard
-`SQLITE_BUSY: database is locked` failure instead of a stall. Both point at
-Isabelle's SQLite build database rather than actual computation. Reproduced
-consistently when Docker's data-root lives on a `_netdev` (network-backed)
-btrfs volume; not yet tested with Docker's data-root on local disk. If this
-test times out, that storage mismatch is the first thing to check - not a
-bug in the image or in this test.
+Known host issue (diagnosed 2026-10-11): on a btrfs Docker data-root,
+`session_start` can hang indefinitely at "Starting session HOL ..." with
+~0% CPU - a btrfs-COW / SQLite-WAL incompatibility hitting Isabelle's
+build-log sqlite files once overlay2 copies them up into the writable
+layer. Worked around below with `--tmpfs` over both log directories (see
+isabelle/README.md for the full explanation). That makes every fresh
+container rebuild HOL from source once (a few minutes, not instant, but
+finite) instead of hanging - hence the generous SESSION_TIMEOUT.
 """
 
 from __future__ import annotations
@@ -34,7 +32,13 @@ import pytest
 pytestmark = pytest.mark.integration
 
 IMAGE = "isabelle-afp"
-SESSION_TIMEOUT = 120
+SESSION_TIMEOUT = 400
+TMPFS_MOUNTS = (
+    "--tmpfs",
+    "/home/isabelle/.isabelle:uid=1001,gid=1001,mode=1777",
+    "--tmpfs",
+    "/home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777",
+)
 
 
 def _docker_available() -> bool:
@@ -54,7 +58,9 @@ def isabelle_container():
         pytest.skip(f"image '{IMAGE}' not built - run: docker build -t {IMAGE} isabelle/")
 
     name = f"isabelle-afp-test-{uuid.uuid4().hex[:8]}"
-    subprocess.run(["docker", "run", "--rm", "-d", "--name", name, IMAGE], check=True)
+    subprocess.run(
+        ["docker", "run", "--rm", "-d", "--name", name, *TMPFS_MOUNTS, IMAGE], check=True
+    )
     try:
         yield name
     finally:

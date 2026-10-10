@@ -20,12 +20,19 @@ USER isabelle
 WORKDIR /home/isabelle
 RUN Isabelle/bin/isabelle components -u /home/isabelle/afp/thys
 
-# Pre-build heap images at image-build time (isabelle build -b), not on
-# every container start: without this, a fresh container has to rebuild
-# HOL (and any AFP session) from scratch on first use, which was slow and
-# triggered intermittent "SQLITE_BUSY: database is locked" build-db errors
-# in testing. Example-Submission is AFP's small demo entry, built here only
-# to exercise AFP registration - it is not meant to pre-build AFP at large.
+# Pre-build HOL + Example-Submission here mainly as a build-time
+# correctness check (catches a broken AFP registration at `docker build`
+# time, not at first deploy). It does NOT make container starts skip the
+# build: the resulting build-log sqlite files (Isabelle/heaps/*/log/*.db)
+# get baked into this image layer, and loading them at container runtime
+# requires overlay2 to copy them up into the writable layer - on a btrfs
+# data-root that copy-up + SQLite's WAL locking hang indefinitely at
+# ~0% CPU (known btrfs-COW/SQLite-WAL incompatibility). Fix is at the run
+# layer, not here: mount tmpfs over the log directories so the container
+# always starts with a fresh, empty log db instead of touching the
+# btrfs-backed copy - see isabelle/README.md and the `--tmpfs` flags in
+# `docker run`. That means every fresh container still rebuilds HOL once
+# (a few minutes), just without hanging.
 RUN Isabelle/bin/isabelle build -b HOL Example-Submission
 
 # Documentation only - EXPOSE does not make a localhost-bound service
