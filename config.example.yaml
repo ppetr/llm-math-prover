@@ -1,0 +1,25 @@
+# Copy to config.yaml and fill in real model identifiers.
+# Model ids drift over time - check current docs before filling these in,
+# the values below are placeholders, not a recommendation.
+backends:
+  claude:
+    enabled: true
+    model: "REPLACE_ME"  # e.g. a current Claude model id from Anthropic's docs
+  gpt:
+    enabled: false
+    model: "REPLACE_ME"
+  gemini:
+    enabled: false
+    model: "REPLACE_ME"
+  ollama:
+    enabled: false
+    model: "REPLACE_ME"  # a model tag already pulled into the ollama container
+
+tools:
+  isabelle: {enabled: false}    # arrives in Phase 1, has no effect yet
+  afp_search: {enabled: false}  # arrives in Phase 3, has no effect yet
+  web_search: {enabled: false}  # arrives in Phase 3, has no effect yet
+
+auth:
+  mode: single_user
+  whitelist: []
