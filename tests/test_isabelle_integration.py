@@ -34,8 +34,12 @@ pytestmark = pytest.mark.integration
 IMAGE = "isabelle-afp"
 SESSION_TIMEOUT = 400
 TMPFS_MOUNTS = (
+    # Mount exactly these two log/ subdirectories, not their parents - see
+    # isabelle/README.md. Their parents also hold the AFP component
+    # registration and compiled heap binaries, neither of which is
+    # disposable; only the SQLite build-log dbs under log/ are.
     "--tmpfs",
-    "/home/isabelle/.isabelle:uid=1001,gid=1001,mode=1777",
+    "/home/isabelle/.isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777",
     "--tmpfs",
     "/home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777",
 )

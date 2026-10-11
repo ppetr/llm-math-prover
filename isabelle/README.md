@@ -22,23 +22,32 @@ while the first time. Verified working with Docker (2026-10-10).
 
 ```sh
 docker run --rm -d --name isabelle-afp \
-  --tmpfs /home/isabelle/.isabelle:uid=1001,gid=1001,mode=1777 \
+  --tmpfs /home/isabelle/.isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777 \
   --tmpfs /home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777 \
   isabelle-afp
 docker exec -it isabelle-afp Isabelle/bin/isabelle client -n agent
 ```
 
 **Why:** diagnosed 2026-10-11 as the known btrfs-COW / SQLite-WAL
-incompatibility. Isabelle keeps small SQLite build-log databases both under
-the user dir (`~/.isabelle/host.db`, `servers.db`, per-session `.db` files)
-and under the distribution's own baked-in heaps dir
-(`Isabelle/heaps/*/log/HOL.db`, from the `isabelle build -b` step in the
-Dockerfile). On this host's btrfs-backed Docker data-root, opening those
-existing files through overlay2's copy-up hangs indefinitely at ~0% CPU
-(`docker stats`) - not a slow build, a genuine stall. It also once
+incompatibility. Isabelle keeps small SQLite build-log databases under
+both `log/` subdirectories above - one per session that gets built, under
+the user heaps tree (`~/.isabelle/heaps/*/log/*.db`, e.g. for AFP entries)
+and under the distribution's own baked-in heaps tree
+(`Isabelle/heaps/*/log/{Pure,HOL}.db`, from the `isabelle build -b` step in
+the Dockerfile). On this host's btrfs-backed Docker data-root, opening
+those existing files through overlay2's copy-up hangs indefinitely at
+~0% CPU (`docker stats`) - not a slow build, a genuine stall. It also once
 surfaced as a hard `SQLITE_BUSY: database is locked` instead of hanging.
-Mounting tmpfs over both log directories sidesteps btrfs for those files
-entirely and the stall disappears.
+Mounting tmpfs over just these two `log/` directories sidesteps btrfs for
+those files entirely and the stall disappears.
+
+**Mount exactly these two `log/` subdirectories, not their parents.**
+`~/.isabelle` also holds `etc/components` (the AFP registration from
+`isabelle components -u`) and the actual compiled heap binaries for
+anything built at runtime (e.g. `~/.isabelle/heaps/*/Example-Submission`) -
+neither is disposable. An earlier version of this fix mounted tmpfs over
+the whole `~/.isabelle` directory, which wiped both of those on every
+restart; verified fixed by narrowing the mount to just `log/`.
 
 **Tradeoff:** tmpfs starts empty, so Isabelle no longer trusts the
 pre-built HOL heap as current and rebuilds it from source on every fresh
