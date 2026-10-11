@@ -66,6 +66,7 @@ def isabelle_container():
         ["docker", "run", "--rm", "-d", "--name", name, *TMPFS_MOUNTS, IMAGE], check=True
     )
     _wait_until_execable(name)
+    _wait_until_server_ready(name)
     try:
         yield name
     finally:
@@ -88,6 +89,30 @@ def _wait_until_execable(container: str, timeout: float = 15) -> None:
             return
         time.sleep(0.5)
     raise TimeoutError(f"container {container!r} never became ready for exec within {timeout}s")
+
+
+def _wait_until_server_ready(container: str, timeout: float = 30) -> None:
+    """Waits until `isabelle server` itself has registered, not just the shell.
+
+    A separate, later readiness point than `_wait_until_execable`: the
+    container's shell comes up long before the server's own JVM finishes
+    starting and writes its entry to servers.db. Connecting too early gets
+    `*** Isabelle server "agent" not running` even though the container and
+    its exec subsystem are both already fine.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            ["docker", "exec", "-i", container, "Isabelle/bin/isabelle", "client", "-n", "agent"],
+            input="",
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if "not running" not in result.stdout + result.stderr:
+            return
+        time.sleep(0.5)
+    raise TimeoutError(f"isabelle server in {container!r} never became ready within {timeout}s")
 
 
 def _read_until(stream, overall_timeout: float, needles: tuple[str, ...]) -> str:
