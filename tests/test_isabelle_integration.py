@@ -65,9 +65,9 @@ def isabelle_container():
     subprocess.run(
         ["docker", "run", "--rm", "-d", "--name", name, *TMPFS_MOUNTS, IMAGE], check=True
     )
-    _wait_until_execable(name)
-    _wait_until_server_ready(name)
     try:
+        _wait_until_execable(name)
+        _wait_until_server_ready(name)
         yield name
     finally:
         subprocess.run(["docker", "kill", name], capture_output=True)
@@ -100,23 +100,24 @@ def _wait_until_server_ready(container: str, timeout: float = 30) -> None:
     `*** Isabelle server "agent" not running` even though the container and
     its exec subsystem are both already fine.
 
-    Deliberately checks the entrypoint's own log file instead of making a
-    real `isabelle client` connection: an earlier version polled with actual
-    client connect/disconnect cycles, and the container was then observed
-    dying moments after a *successful* readiness check (passed, then the
-    very next real connection got "container is not running") - repeated
-    protocol-level connects while the server is still mid-startup are the
-    prime suspect, so readiness here never talks to the server at all.
+    Uses `isabelle server -l` (list registered servers) rather than
+    `isabelle client -n agent`: a real client connection opens a session
+    with the server, and an earlier version of this check did that
+    repeatedly - the container was then observed dying moments after a
+    *successful* check, immediately before the very next real connection.
+    `-l` only reads the server registry, no session involved. (A log-file
+    based check was tried in between and dropped: `-L FILE` only writes
+    when there is something to log, so the file may never be created at
+    all even once the server is fully up.)
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = subprocess.run(
-            ["docker", "exec", container, "cat", "/home/isabelle/server.log"],
+            ["docker", "exec", container, "Isabelle/bin/isabelle", "server", "-l"],
             capture_output=True,
             text=True,
         )
-        if result.returncode == 0 and "=" in result.stdout:
-            time.sleep(1)  # small safety margin past the log line appearing
+        if result.returncode == 0 and "agent" in result.stdout:
             return
         time.sleep(1)
     raise TimeoutError(f"isabelle server in {container!r} never became ready within {timeout}s")
