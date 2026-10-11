@@ -65,10 +65,29 @@ def isabelle_container():
     subprocess.run(
         ["docker", "run", "--rm", "-d", "--name", name, *TMPFS_MOUNTS, IMAGE], check=True
     )
+    _wait_until_execable(name)
     try:
         yield name
     finally:
         subprocess.run(["docker", "kill", name], capture_output=True)
+
+
+def _wait_until_execable(container: str, timeout: float = 15) -> None:
+    """Waits until `docker exec` actually works, not just until `docker run -d` returns.
+
+    `docker run -d` can return before the container is ready to accept an
+    exec session - every manual reproduction of this test used a sleep
+    before the first exec; this fixture originally had none, which is the
+    likely cause of the "connection closed"/"not running" failures seen in
+    practice (nothing to do with the btrfs/tmpfs issue above).
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = subprocess.run(["docker", "exec", container, "true"], capture_output=True)
+        if result.returncode == 0:
+            return
+        time.sleep(0.5)
+    raise TimeoutError(f"container {container!r} never became ready for exec within {timeout}s")
 
 
 def _read_until(stream, overall_timeout: float, needles: tuple[str, ...]) -> str:
