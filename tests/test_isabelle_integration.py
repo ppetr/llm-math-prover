@@ -99,19 +99,26 @@ def _wait_until_server_ready(container: str, timeout: float = 30) -> None:
     starting and writes its entry to servers.db. Connecting too early gets
     `*** Isabelle server "agent" not running` even though the container and
     its exec subsystem are both already fine.
+
+    Deliberately checks the entrypoint's own log file instead of making a
+    real `isabelle client` connection: an earlier version polled with actual
+    client connect/disconnect cycles, and the container was then observed
+    dying moments after a *successful* readiness check (passed, then the
+    very next real connection got "container is not running") - repeated
+    protocol-level connects while the server is still mid-startup are the
+    prime suspect, so readiness here never talks to the server at all.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = subprocess.run(
-            ["docker", "exec", "-i", container, "Isabelle/bin/isabelle", "client", "-n", "agent"],
-            input="",
+            ["docker", "exec", container, "cat", "/home/isabelle/server.log"],
             capture_output=True,
             text=True,
-            timeout=10,
         )
-        if "not running" not in result.stdout + result.stderr:
+        if result.returncode == 0 and "=" in result.stdout:
+            time.sleep(1)  # small safety margin past the log line appearing
             return
-        time.sleep(0.5)
+        time.sleep(1)
     raise TimeoutError(f"isabelle server in {container!r} never became ready within {timeout}s")
 
 
