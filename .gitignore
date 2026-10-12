@@ -5,3 +5,7 @@ __pycache__/
 dist/
 .env
 *.egg-info/
+.isabelle-log-cache/
+pytest-integration.log
+pytest-integration.xml
+docker-build.log

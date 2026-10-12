@@ -60,6 +60,39 @@ If you move Docker's data-root to a non-btrfs (or no-COW-flagged)
 filesystem, these `--tmpfs` flags should become unnecessary and container
 starts should go back to being fast - not verified either way yet.
 
+## Memory: heap caps + host swap are required on this host
+
+That same fresh-rebuild-on-every-start (above) has an unbounded JVM
+(`isabelle server`'s `ISABELLE_TOOL_JAVA_OPTIONS`, 4GB default) and an
+unbounded PolyML build process (`ML_OPTIONS`, no default max at all) - on
+this host's 15GB RAM, building HOL this way reliably OOM-killed the host
+outright (`dmesg`: `Out of memory: Killed process (java)`, confirmed 5+
+times, diagnosed 2026-10-12). Both get capped (6GB JVM / 6GB PolyML) in
+the Dockerfile by writing `~/.isabelle/etc/settings` (`ISABELLE_HOME_USER`,
+read last and wins - both vars are set with a bare `=` in the
+distribution/component settings, so a `docker run -e` override alone gets
+clobbered). The host also needs a bigger swap cushion than its default
+256MB zram; bump it before running a build/test:
+
+```sh
+sudo swapoff /dev/zram0
+sudo sh -c 'echo 1 > /sys/block/zram0/reset'
+sudo sh -c 'echo 4G > /sys/block/zram0/disksize'
+sudo mkswap /dev/zram0
+sudo swapon -p 100 /dev/zram0
+```
+
+This is a manual, non-persistent bump (the 256MB default is set by an
+Ansible-managed `/etc/default/zramswap` with `SWAP=false`, intentionally
+not touched here) - redo it after a reboot.
+
+**Build time varies a lot with host load.** With the caps above and no
+other load, a fresh HOL+AFP rebuild takes ~7-8 minutes. This host is a
+shared desktop, not a dedicated CI runner - under concurrent load (seen:
+GPU video transcoding, torrenting) the same rebuild can stretch past 20-40
+minutes without anything being wrong, hence `tests/test_isabelle_integration.py`'s
+generous `SESSION_TIMEOUT`.
+
 ## Manual smoke test (Fáze 1 goal) - verified
 
 ```json

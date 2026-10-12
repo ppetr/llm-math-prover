@@ -14,8 +14,17 @@ Known host issue (diagnosed 2026-10-11): on a btrfs Docker data-root,
 build-log sqlite files once overlay2 copies them up into the writable
 layer. Worked around below with `--tmpfs` over both log directories (see
 isabelle/README.md for the full explanation). That makes every fresh
-container rebuild HOL from source once (a few minutes, not instant, but
-finite) instead of hanging - hence the generous SESSION_TIMEOUT.
+container rebuild HOL from source once instead of hanging.
+
+Known host issue (diagnosed 2026-10-12): the unbounded JVM/ML heap used
+by a from-scratch rebuild (4GB+ JVM, unbounded PolyML) OOM-killed the host
+(15GB RAM) outright. Worked around in isabelle/Dockerfile by capping both
+ISABELLE_TOOL_JAVA_OPTIONS and ML_OPTIONS, plus a larger zram swap on the
+host as a cushion - see isabelle/README.md. A capped, from-scratch
+HOL+AFP rebuild takes ~7-8 minutes under no other load, but this host is
+a shared desktop (not a dedicated CI runner) and real build time varies a
+lot with whatever else is running (seen stretching past 20-40 minutes
+under heavy concurrent load) - hence the generous SESSION_TIMEOUT below.
 """
 
 from __future__ import annotations
@@ -32,7 +41,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 IMAGE = "isabelle-afp"
-SESSION_TIMEOUT = 400
+SESSION_TIMEOUT = 1800
 TMPFS_MOUNTS = (
     # Mount exactly these two log/ subdirectories, not their parents - see
     # isabelle/README.md. Their parents also hold the AFP component
@@ -157,13 +166,15 @@ def _read_until(stream, overall_timeout: float, needles: tuple[str, ...]) -> str
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError(
-                f"timed out waiting for {needles!r} after {overall_timeout}s; got so far: {lines}"
+                f"timed out waiting for {needles!r} after {overall_timeout}s; "
+                f"got so far: {lines}"
             )
         try:
             line = q.get(timeout=remaining)
         except queue.Empty:
             raise TimeoutError(
-                f"timed out waiting for {needles!r} after {overall_timeout}s; got so far: {lines}"
+                f"timed out waiting for {needles!r} after {overall_timeout}s; "
+                f"got so far: {lines}"
             ) from None
         if line is None:
             raise TimeoutError(f"connection closed before {needles!r}; got so far: {lines}")

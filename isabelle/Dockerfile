@@ -20,6 +20,19 @@ USER isabelle
 WORKDIR /home/isabelle
 RUN Isabelle/bin/isabelle components -u /home/isabelle/afp/thys
 
+# Cap both heavy-memory processes: the orchestrating JVM
+# (ISABELLE_TOOL_JAVA_OPTIONS) and the actual PolyML build process
+# (ML_OPTIONS), which otherwise grows unbounded and OOMs the host on a
+# 15GB-RAM box. Both are set with a bare `=` in the distribution/component
+# settings, so a `docker run -e` override gets clobbered when those files
+# are re-sourced - ISABELLE_HOME_USER's settings file is sourced last and
+# wins, so set them there instead.
+RUN mkdir -p /home/isabelle/.isabelle/etc \
+    && cat >> /home/isabelle/.isabelle/etc/settings <<'EOF'
+ISABELLE_TOOL_JAVA_OPTIONS="-Djava.awt.headless=true -Xms512m -Xmx6g -Xss16m"
+ML_OPTIONS="--minheap 1000 --maxheap 6000"
+EOF
+
 # Pre-build HOL + Example-Submission here mainly as a build-time
 # correctness check (catches a broken AFP registration at `docker build`
 # time, not at first deploy). It does NOT make container starts skip the
