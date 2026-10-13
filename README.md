@@ -3,9 +3,9 @@
 Config-driven container stack for a cloud-LLM agent that proves theorems with
 Isabelle/HOL. Design rationale: [docs/design/isabelle-agent-stack.md](docs/design/isabelle-agent-stack.md).
 
-Currently implements Fáze 0 only: Open WebUI talking to Claude/GPT/Gemini
-through a LiteLLM gateway, both generated from one `config.yaml`. Isabelle,
-the agent service, and file downloads arrive in later phases.
+Implements Fáze 0 (Open WebUI + LiteLLM) and Fáze 2 (agent with an Isabelle
+tool); AFP/web search tools arrive in Fáze 3. Fáze 1 (the `isabelle` image
+itself) is documented separately in [isabelle/README.md](isabelle/README.md).
 
 ## Fáze 0: generate and run
 
@@ -23,6 +23,28 @@ cd dist && docker compose up
 Open WebUI comes up on `http://localhost:8080`, the LiteLLM gateway on
 `http://localhost:4000`. Verify LaTeX rendering by sending a message
 containing `$$\int_0^1 x^2\,dx = \tfrac13$$` in the chat.
+
+## Fáze 2: agent (Isabelle tool)
+
+Set `tools.isabelle.enabled: true` in `config.yaml` before rendering, build
+both images the compose file references by name, and fill in
+`AGENT_SIGNING_SECRET` in `dist/.env` (`openssl rand -hex 32`):
+
+```sh
+docker build -t isabelle-afp isabelle/                           # see isabelle/README.md
+docker build -t ai-math-container-agent -f agent/Dockerfile .    # from the repo root
+```
+
+The heap-cache volumes (`isabelle-afp-user-heaplog`,
+`isabelle-afp-dist-heaplog`) still need the one-time `chattr +C` setup from
+isabelle/README.md *before* the first `docker compose up` - otherwise
+compose creates them as ordinary (COW) volumes and the btrfs/SQLite-WAL
+hang that fix exists for can come back.
+
+Once up, webui talks to the agent instead of llm-gateway directly (see
+`docs/design/isabelle-agent-stack.md` §2) - ask it to check a theory and it
+calls the `isabelle_check_theory` tool, which only reports success if the
+Isabelle kernel actually accepted the proof.
 
 ## Development
 

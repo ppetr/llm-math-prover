@@ -7,6 +7,10 @@ dependencies = [
     "pydantic>=2.6",
     "jinja2>=3.1",
     "pyyaml>=6.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "isabelle-client>=1.1.2",
 ]
 
 [project.optional-dependencies]
@@ -15,7 +19,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["builder*"]
+include = ["builder*", "agent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

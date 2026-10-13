@@ -3,11 +3,23 @@ services:
     # Pin an exact tag before relying on this outside local experimentation.
     image: ghcr.io/open-webui/open-webui:main
     depends_on:
+{% if isabelle_enabled %}
+      - agent
+{% else %}
       - llm-gateway
+{% endif %}
     environment:
       # NOTE: verify this env var against the Open WebUI version you pin -
       # it has been renamed across releases (singular vs. OPENAI_API_BASE_URLS).
+{% if isabelle_enabled %}
+      # The agent (not llm-gateway) is in the loop when Isabelle is enabled -
+      # it runs with network_mode: "service:isabelle" (see isabelle/README.md
+      # and design doc §2), so it has no network identity of its own and is
+      # only reachable at the *isabelle* service's hostname.
+      OPENAI_API_BASE_URL: http://isabelle:8000/v1
+{% else %}
       OPENAI_API_BASE_URL: http://llm-gateway:4000/v1
+{% endif %}
       OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
     ports:
       - "8080:8080"
@@ -36,9 +48,49 @@ services:
       - ollama-data:/root/.ollama
     restart: unless-stopped
 {% endif %}
+{% if isabelle_enabled %}
+
+  isabelle:
+    # docker build -t isabelle-afp isabelle/ (see isabelle/README.md)
+    image: isabelle-afp
+    volumes:
+      - isabelle-afp-user-heaplog:/home/isabelle/.isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log
+      - isabelle-afp-dist-heaplog:/home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log
+      - isabelle-server-info:/home/isabelle/server-info
+      - isabelle-workspace:/isabelle-workspace
+    restart: unless-stopped
+
+  agent:
+    # docker build -t ai-math-container-agent -f agent/Dockerfile . (see README.md)
+    image: ai-math-container-agent
+    network_mode: "service:isabelle"
+    depends_on:
+      - isabelle
+      - llm-gateway
+    env_file:
+      - .env
+    environment:
+      LITELLM_BASE_URL: http://llm-gateway:4000/v1
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      ISABELLE_SERVER_INFO_PATH: /isabelle-server-info/registration.log
+      ISABELLE_WORKSPACE_DIR: /isabelle-workspace
+      AGENT_DATA_DIR: /data
+    volumes:
+      - isabelle-server-info:/isabelle-server-info:ro
+      - isabelle-workspace:/isabelle-workspace
+      - agent-data:/data
+    restart: unless-stopped
+{% endif %}
 
 volumes:
   webui-data:
 {% if ollama_enabled %}
   ollama-data:
+{% endif %}
+{% if isabelle_enabled %}
+  isabelle-afp-user-heaplog:
+  isabelle-afp-dist-heaplog:
+  isabelle-server-info:
+  isabelle-workspace:
+  agent-data:
 {% endif %}

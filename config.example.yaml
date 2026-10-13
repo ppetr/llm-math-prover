@@ -16,7 +16,10 @@ backends:
     model: "REPLACE_ME"  # a model tag already pulled into the ollama container
 
 tools:
-  isabelle: {enabled: false}    # arrives in Phase 1, has no effect yet
+  # Adds the isabelle/agent services and routes webui through the agent
+  # instead of straight to llm-gateway - see isabelle/README.md and
+  # README.md "Agent (Phase 2)" before setting this true.
+  isabelle: {enabled: false}
   afp_search: {enabled: false}  # arrives in Phase 3, has no effect yet
   web_search: {enabled: false}  # arrives in Phase 3, has no effect yet
 
