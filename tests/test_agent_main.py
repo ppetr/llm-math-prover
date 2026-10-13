@@ -1,0 +1,117 @@
+import json
+
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+from agent.main import ChatCompletionRequest, create_app, run_chat_completion
+from agent.tools import ToolRegistry, ToolSpec
+
+
+class FakeLLM:
+    """Replies with a tool call on the first turn, a final answer on the second."""
+
+    def __init__(self, turns=None):
+        self.calls = 0
+        self._turns = turns
+
+    def chat(self, model, messages, tools=None):
+        self.calls += 1
+        if self._turns is not None:
+            return self._turns[min(self.calls, len(self._turns)) - 1]
+        if self.calls == 1:
+            return {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call1",
+                        "type": "function",
+                        "function": {"name": "echo", "arguments": json.dumps({"x": 1})},
+                    }
+                ],
+            }
+        return {"role": "assistant", "content": "final answer"}
+
+    def models(self):
+        return {"object": "list", "data": [{"id": "claude", "object": "model"}]}
+
+
+def _echo_registry():
+    return ToolRegistry(
+        [ToolSpec(name="echo", description="d", parameters={"type": "object"}, handler=lambda u, a: json.dumps(a))]
+    )
+
+
+def test_run_chat_completion_resolves_tool_call_then_returns_final_message():
+    llm = FakeLLM()
+    request = ChatCompletionRequest(model="claude-x", messages=[{"role": "user", "content": "hi"}], user="alice")
+
+    response = run_chat_completion(request, llm, _echo_registry())
+
+    assert llm.calls == 2
+    assert response["model"] == "claude-x"
+    assert response["choices"][0]["message"] == {"role": "assistant", "content": "final answer"}
+
+
+def test_run_chat_completion_returns_directly_when_no_tool_call():
+    llm = FakeLLM(turns=[{"role": "assistant", "content": "no tools needed"}])
+    request = ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}])
+
+    response = run_chat_completion(request, llm, _echo_registry())
+
+    assert llm.calls == 1
+    assert response["choices"][0]["message"]["content"] == "no tools needed"
+
+
+def test_run_chat_completion_raises_when_loop_never_converges():
+    looping_call = {
+        "role": "assistant",
+        "tool_calls": [
+            {"id": "call1", "type": "function", "function": {"name": "echo", "arguments": "{}"}}
+        ],
+    }
+    llm = FakeLLM(turns=[looping_call] * 20)
+    request = ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "hi"}])
+
+    with pytest.raises(HTTPException) as exc_info:
+        run_chat_completion(request, llm, _echo_registry())
+    assert exc_info.value.status_code == 502
+
+
+def test_chat_completions_endpoint_defaults_user_to_anonymous():
+    llm = FakeLLM(turns=[{"role": "assistant", "content": "hi there"}])
+
+    class NoArtifacts:
+        pass
+
+    app = create_app(llm, _echo_registry(), NoArtifacts())
+    client = TestClient(app)
+
+    response = client.post(
+        "/v1/chat/completions", json={"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "hi there"
+
+
+def test_models_endpoint_proxies_llm_client():
+    class NoArtifacts:
+        pass
+
+    app = create_app(FakeLLM(), ToolRegistry([]), NoArtifacts())
+    client = TestClient(app)
+
+    response = client.get("/v1/models")
+
+    assert response.status_code == 200
+    assert response.json() == {"object": "list", "data": [{"id": "claude", "object": "model"}]}
+
+
+def test_healthz():
+    class NoArtifacts:
+        pass
+
+    app = create_app(FakeLLM(), ToolRegistry([]), NoArtifacts())
+    client = TestClient(app)
+    assert client.get("/healthz").json() == {"status": "ok"}

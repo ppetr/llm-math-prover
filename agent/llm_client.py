@@ -22,5 +22,11 @@ class LLMClient:
         response.raise_for_status()
         return response.json()["choices"][0]["message"]
 
+    def models(self) -> dict:
+        """Returns the gateway's /models response as-is, for clients (e.g. Open WebUI) that list models."""
+        response = self._client.get("/models")
+        response.raise_for_status()
+        return response.json()
+
     def close(self) -> None:
         self._client.close()

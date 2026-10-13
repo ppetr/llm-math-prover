@@ -95,6 +95,12 @@ def create_app(
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/v1/models")
+    def models() -> dict[str, Any]:
+        # Open WebUI populates its model dropdown from this endpoint - without
+        # it, it silently shows no models even with a valid API key.
+        return llm_client.models()
+
     @app.post("/v1/chat/completions")
     def chat_completions(request: ChatCompletionRequest) -> dict[str, Any]:
         return run_chat_completion(request, llm_client, registry)
