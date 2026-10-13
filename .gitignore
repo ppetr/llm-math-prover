@@ -9,3 +9,4 @@ dist/
 pytest-integration.log
 pytest-integration.xml
 docker-build.log
+.claude/settings.json

@@ -46,6 +46,22 @@ Once up, webui talks to the agent instead of llm-gateway directly (see
 calls the `isabelle_check_theory` tool, which only reports success if the
 Isabelle kernel actually accepted the proof.
 
+## Backing up user data
+
+`webui-data`, `agent-data`, and `isabelle-workspace` hold the stack's only
+irreplaceable user data (Open WebUI accounts/chats, agent artifacts,
+Isabelle theory files). [scripts/backup-volumes.sh](scripts/backup-volumes.sh)
+writes each one to its own `.tar.zst` archive and prints the matching
+restore command:
+
+```sh
+./scripts/backup-volumes.sh backup               # -> ./volume-backups/*.tar.zst
+./scripts/backup-volumes.sh restore ARCHIVE VOLUME_NAME
+```
+
+Requires the `zstd` CLI on the host; run `./scripts/backup-volumes.sh` with
+no arguments for the full usage.
+
 ## Development
 
 ```sh
