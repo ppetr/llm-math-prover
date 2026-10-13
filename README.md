@@ -3,11 +3,11 @@
 Config-driven container stack for a cloud-LLM agent that proves theorems with
 Isabelle/HOL. Design rationale: [docs/design/isabelle-agent-stack.md](docs/design/isabelle-agent-stack.md).
 
-Implements Fáze 0 (Open WebUI + LiteLLM) and Fáze 2 (agent with an Isabelle
-tool); AFP/web search tools arrive in Fáze 3. Fáze 1 (the `isabelle` image
+Implements Phase 0 (Open WebUI + LiteLLM) and Phase 2 (agent with an Isabelle
+tool); AFP/web search tools arrive in Phase 3. Phase 1 (the `isabelle` image
 itself) is documented separately in [isabelle/README.md](isabelle/README.md).
 
-## Fáze 0: generate and run
+## Phase 0: generate and run
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -e .
@@ -24,7 +24,7 @@ Open WebUI comes up on `http://localhost:8080`, the LiteLLM gateway on
 `http://localhost:4000`. Verify LaTeX rendering by sending a message
 containing `$$\int_0^1 x^2\,dx = \tfrac13$$` in the chat.
 
-## Fáze 2: agent (Isabelle tool)
+## Phase 2: agent (Isabelle tool)
 
 Set `tools.isabelle.enabled: true` in `config.yaml` before rendering, build
 both images the compose file references by name, and fill in

@@ -1,11 +1,11 @@
-# isabelle image (Fáze 1)
+# isabelle image (Phase 1)
 
 Builds Isabelle/HOL + the Archive of Formal Proofs into one image and starts
 `isabelle server` as its entrypoint.
 
 Not yet wired into `compose.yaml` - the builder only generates `webui` and
-`llm-gateway` so far (Fáze 0). This image is a standalone build until the
-agent (Fáze 2) exists to run alongside it as a `network_mode: "service:isabelle"`
+`llm-gateway` so far (Phase 0). This image is a standalone build until the
+agent (Phase 2) exists to run alongside it as a `network_mode: "service:isabelle"`
 sidecar, per the design doc's §2 networking note.
 
 ## Build
@@ -135,7 +135,7 @@ GPU video transcoding, torrenting) the same rebuild can stretch past 20-40
 minutes without anything being wrong, hence `tests/test_isabelle_integration.py`'s
 generous `SESSION_TIMEOUT`.
 
-## Manual smoke test (Fáze 1 goal) - verified
+## Manual smoke test (Phase 1 goal) - verified
 
 ```json
 session_start {"session": "HOL"}

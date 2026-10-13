@@ -1,118 +1,125 @@
-# Agent pro formální důkazy v Isabelle/HOL
+# Agent for Formal Proofs in Isabelle/HOL
 
-*Návrh architektury — pracovní verze, 2026-10-10*
+*Architecture design — working draft, 2026-10-10*
 
-Kontejnerový systém, který propojí cloudový LLM (Claude / GPT / Gemini) s
-lokálním formálním aparátem — Isabelle/HOL a Archive of Formal Proofs — tak,
-aby agent mohl matematické tvrzení nejen navrhnout, ale i nechat strojově
-ověřit. Celý stack se generuje z jednoho konfiguračního schématu, ne z ručně
-psaného compose souboru.
+A containerized system that connects a cloud LLM (Claude / GPT / Gemini) to a
+local formal apparatus — Isabelle/HOL and the Archive of Formal Proofs — so
+the agent can not only propose a mathematical statement but also have it
+machine-verified. The whole stack is generated from a single configuration
+schema, not a hand-written compose file.
 
-> **Proč to může fungovat i s nedokonalým agentem.** Isabelle je LCF-style
-> dokazovač — má malé, důvěryhodné jádro, které jako jediné rozhoduje, zda je
-> důkaz platný. Agent (a LLM pod ním) může navrhovat, hádat, překládat z
-> jiných systémů nebo hledat na webu libovolně nespolehlivě — pokud výsledný
-> důkazní skript neprojde jádrem Isabelle, je zahozen, ne tiše přijat.
-> Architektura proto nemusí řešit důvěryhodnost LLM; musí jen zajistit, že
-> *nic se nepovažuje za dokázané, dokud to neřekne Isabelle*.
+> **Why this can work even with an imperfect agent.** Isabelle is an
+> LCF-style prover — it has a small, trusted kernel that alone decides
+> whether a proof is valid. The agent (and the LLM behind it) may propose,
+> guess, translate from other systems, or search the web arbitrarily
+> unreliably — if the resulting proof script doesn't pass the Isabelle
+> kernel, it's discarded, not silently accepted. The architecture therefore
+> doesn't need to solve LLM trustworthiness; it only needs to ensure that
+> *nothing counts as proved until Isabelle says so*.
 
-## §1 Pojmy a vrstvy
+## §1 Concepts and layers
 
-Zadání pojmy "Ollama" a "agent" mírně slučuje tři různé věci. Rozlišujeme je
-od začátku, protože na tom stojí zbytek návrhu.
+The brief slightly conflates the terms "Ollama" and "agent" into three
+different things. We distinguish them from the start, since the rest of the
+design rests on it.
 
-| Pojem | Co to je |
+| Term | What it is |
 |---|---|
-| **Open WebUI** | Chatovací frontend (dřívější "Ollama WebUI"). Model-agnostický, umí KaTeX render LaTeXu v konverzaci a vlastní autentizaci včetně OAuth. |
-| **Ollama** | Runtime pro lokální open-weight modely. V tomto projektu *volitelná budoucí větev* — jádro úlohy řeší cloudový LLM + lokální nástroje, ne lokální inference. |
-| **LiteLLM gateway** | Proxy, která pod jedním OpenAI-kompatibilním API schová Claude, GPT, Gemini (a později Ollamu). Jediné místo, kde žijí API klíče. |
-| **Agent** | Samostatná služba (FastAPI/Python), která vede tool-calling smyčku mezi LLM a lokálními nástroji. Nové, na míru psané jádro projektu. |
-| **Isabelle/HOL** | Proof assistant s objektovou logikou HOL. Běží jako `isabelle server` — řádkový JSON-přes-TCP protokol pro zadávání teorií a čtení výsledků. |
-| **AFP** | Archive of Formal Proofs — veřejná sbírka hotových Isabelle teorií (isa-afp.org), vydávaná pro každou verzi Isabelle. |
+| **Open WebUI** | Chat frontend (formerly "Ollama WebUI"). Model-agnostic, supports KaTeX rendering of LaTeX in the conversation and has its own authentication including OAuth. |
+| **Ollama** | Runtime for local open-weight models. In this project an *optional future branch* — the core of the task is solved by a cloud LLM + local tools, not local inference. |
+| **LiteLLM gateway** | A proxy that hides Claude, GPT, Gemini (and later Ollama) behind a single OpenAI-compatible API. The only place where API keys live. |
+| **Agent** | A standalone service (FastAPI/Python) that drives the tool-calling loop between the LLM and local tools. The new, purpose-built core of the project. |
+| **Isabelle/HOL** | Proof assistant with the HOL object logic. Runs as `isabelle server` — a line-based JSON-over-TCP protocol for submitting theories and reading results. |
+| **AFP** | Archive of Formal Proofs — a public collection of finished Isabelle theories (isa-afp.org), released for each Isabelle version. |
 
-## §2 Architektura
+## §2 Architecture
 
-Agent je jediný uzel, který mluví s LLM i s nástroji. Nic jiného se k
-Isabelle ani na web nepřipojuje přímo.
+The agent is the only node that talks to both the LLM and the tools. Nothing
+else connects directly to Isabelle or to the web.
 
 ```mermaid
 flowchart TB
-    U[Uživatel]
+    U[User]
     W[Open WebUI<br/>chat · KaTeX render]
-    A[["Agent (FastAPI)<br/>tool-calling smyčka"]]
+    A[["Agent (FastAPI)<br/>tool-calling loop"]]
     L[LiteLLM gateway<br/>Claude / GPT / Gemini]
     I[Isabelle/HOL<br/>isabelle server · AFP]
     F[Web search / AFP fetch]
 
-    U <-->|otázka / odpověď| W
+    U <-->|question / answer| W
     W <-->|OpenAI-API request/response| A
     A -->|prompt + tool specs| L
     L -->|text / tool_call| A
     A -->|theory / lemma| I
     I -->|proved / error| A
     A -->|afp_fetch / web_search| F
-    F -->|soubor / odkazy| A
+    F -->|file / links| A
 ```
 
-Agent opakuje smyčku volání LLM + nástrojů, dokud LLM nemá dost informací na
-hotovou odpověď.
+The agent repeats the loop of calling the LLM + tools until the LLM has
+enough information for a final answer.
 
-**Konkrétní průchod:**
+**A concrete walkthrough:**
 
-1. Uživatel napíše do Open WebUI: *"Dokaž, že prvočísel je nekonečně mnoho."*
-2. Agent poslá dotaz + popis nástrojů přes LiteLLM na Claude/GPT/Gemini.
-3. LLM vrátí `tool_call: afp_search("infinitude of primes")` — agent zjistí,
-   že důkaz už existuje v AFP, a stáhne entry.
-4. Agent pošle teorii na `isabelle server`; ten ji zkompiluje a vrátí
-   `proved` nebo konkrétní chybu.
-5. Výsledek (ověřeno jádrem Isabelle, ne jen tvrzením LLM) se vrátí LLM,
-   které z něj sestaví odpověď pro uživatele.
-6. Odpověď obsahuje odkazy na stažení `.thy` souboru a typeset PDF důkazu
-   (§5) — klik stáhne přímo z agenta.
+1. The user types into Open WebUI: *"Prove that there are infinitely many
+   primes."*
+2. The agent sends the query + tool descriptions through LiteLLM to
+   Claude/GPT/Gemini.
+3. The LLM returns `tool_call: afp_search("infinitude of primes")` — the
+   agent finds that the proof already exists in AFP and downloads the entry.
+4. The agent sends the theory to `isabelle server`; it compiles it and
+   returns `proved` or a specific error.
+5. The result (verified by the Isabelle kernel, not just asserted by the
+   LLM) is returned to the LLM, which composes an answer for the user from
+   it.
+6. The answer includes links to download the `.thy` file and the typeset PDF
+   proof (§5) — clicking downloads directly from the agent.
 
-**Odpovědnosti komponent:**
+**Component responsibilities:**
 
-| Komponenta | Technologie | Odpovědnost |
+| Component | Technology | Responsibility |
 |---|---|---|
-| `webui` | Open WebUI | Konverzace, LaTeX render, autentizace uživatelů |
-| `agent` | FastAPI (Python) | Tool-calling smyčka, kontrakt vůči WebUI, routování na Isabelle / web / AFP, výdej výstupních souborů (§5) |
-| `llm-gateway` | LiteLLM | Jednotné API nad Claude/GPT/Gemini, úložiště API klíčů |
-| `isabelle` | Isabelle/HOL + AFP | `isabelle server`, ověření důkazů, souběžné session per uživatel |
-| `ollama` *(později)* | Ollama | Lokální modely — stejné OpenAI-kompatibilní rozhraní, přidá se bez refaktoru |
+| `webui` | Open WebUI | Conversation, LaTeX rendering, user authentication |
+| `agent` | FastAPI (Python) | Tool-calling loop, contract with WebUI, routing to Isabelle / web / AFP, serving output files (§5) |
+| `llm-gateway` | LiteLLM | Unified API over Claude/GPT/Gemini, API key storage |
+| `isabelle` | Isabelle/HOL + AFP | `isabelle server`, proof verification, concurrent sessions per user |
+| `ollama` *(later)* | Ollama | Local models — same OpenAI-compatible interface, added without refactoring |
 
-> **Oprava z Fáze 1 průzkumu:** `isabelle server` se váže jen na `localhost`
-> — je to vlastnost Isabelle (bezpečnostní omezení), ne naše volba, a nejde
-> ho zavolat přes jméno kontejneru po compose síti. Agent proto poběží s
-> `network_mode: "service:isabelle"` (sdílí network namespace s `isabelle`
-> kontejnerem jako sidecar) — z pohledu agenta je pak server dostupný na
-> `localhost:<port>`. Diagram a tok dat výše zůstávají platné, jen přenos
-> mezi agentem a Isabelle není přes docker síť, ale přes sdílený namespace.
+> **Correction from the Phase 1 investigation:** `isabelle server` binds
+> only to `localhost` — this is a property of Isabelle (a security
+> restriction), not our choice, and it can't be reached by container name
+> over the compose network. The agent therefore runs with
+> `network_mode: "service:isabelle"` (sharing the network namespace with the
+> `isabelle` container as a sidecar) — from the agent's point of view, the
+> server is then reachable at `localhost:<port>`. The diagram and data flow
+> above remain valid; only the transport between the agent and Isabelle is
+> via the shared namespace instead of the docker network.
 
-## §3 Rozhodnutí z návrhu
+## §3 Design decisions
 
-Pět voleb, které určují tvar zbytku systému.
+Five choices that determine the shape of the rest of the system.
 
-| Otázka | Zvoleno | Proč / cesta dál |
+| Question | Chosen | Why / path forward |
 |---|---|---|
-| Lokální modely | Jen cloud teď, Ollama volitelně později | Lokální HW na silné modely nestačí; cloud LLM ale nemá matematické nástroje. Ollama se připojí stejným OpenAI-kompatibilním rozhraním, žádný refaktor. |
-| Agent vrstva | Samostatná FastAPI služba | Plná kontrola nad tool-callingem a nad protokolem `isabelle server`, nezávislá na tom, co umí Open WebUI nativně. |
-| Uživatelé | Single-user teď, multi-user připraveno | Open WebUI má OAuth + whitelist nativně. `user_id`/`session_id` je povinný parametr v agentu i v Isabelle session od první verze. `session_id` nyní skutečně oddělí Isabelle session (a workspace adresář) jedné konverzace od ostatních, s LRU stropem na počet souběžných sessions (`AGENT_MAX_ISABELLE_SESSIONS`). |
-| Sestavení stacku | Generovat z konfiguračního schématu (§4), ne ručně psát compose | Jedna instance = jeden `config.yaml` + spuštění builderu. Stejný Pydantic model validuje config i řídí runtime agenta — jeden zdroj pravdy, ne čtyři soubory k ruční synchronizaci. |
-| Stahování výstupů | Signed, časově omezené odkazy přímo na agenta (§5) | Žádný WebUI plugin — Open WebUI jen vykreslí markdown link. Token nese autorizaci sám, bez závislosti na sdíleném auth cookie s WebUI, takže funguje stejně v single-user i multi-user fázi. |
+| Local models | Cloud only for now, Ollama optionally later | Local HW isn't enough for strong models; but a cloud LLM lacks mathematical tools. Ollama connects via the same OpenAI-compatible interface, no refactor. |
+| Agent layer | Standalone FastAPI service | Full control over tool-calling and over the `isabelle server` protocol, independent of what Open WebUI natively supports. |
+| Users | Single-user for now, multi-user ready | Open WebUI has OAuth + whitelist natively. `user_id`/`session_id` is a required parameter in both the agent and the Isabelle session from the first version. `session_id` now actually isolates one conversation's Isabelle session (and workspace directory) from others, with an LRU cap on the number of concurrent sessions (`AGENT_MAX_ISABELLE_SESSIONS`). |
+| Building the stack | Generate from a configuration schema (§4), not hand-write compose | One instance = one `config.yaml` + running the builder. The same Pydantic model validates the config and drives the agent's runtime — one source of truth, not four files to sync by hand. |
+| Downloading outputs | Signed, time-limited links directly to the agent (§5) | No WebUI plugin — Open WebUI just renders a markdown link. The token carries its own authorization, without depending on a shared auth cookie with WebUI, so it works the same in both the single-user and multi-user phases. |
 
-## §4 Konfigurace jako kód
+## §4 Configuration as code
 
-Žádný ručně psaný `compose.yaml`. Jedno konfigurační schéma, ze kterého se
-stack sestaví "na zakázku" pro konkrétní nasazení.
+No hand-written `compose.yaml`. A single configuration schema from which the
+stack is built "to order" for a specific deployment.
 
-Jádrem je jeden Pydantic model v agentu — zároveň schéma pro validaci
-konfiguračního souboru, zároveň runtime `Settings` objekt, který si agent
-načte při startu. Stejný zdroj pravdy tak řídí, co se agentovi zaregistruje
-jako nástroj pro LLM, i to, jaké kontejnery a s jakými proměnnými se
-vygenerují.
+At the core is a single Pydantic model in the agent — simultaneously the
+schema for validating the config file and the runtime `Settings` object that
+the agent loads at startup. The same source of truth thus governs both what
+gets registered with the agent as an LLM tool and which containers get
+generated with which variables.
 
 ```yaml
-# config.yaml — jedno nasazení, jedna instance stacku
+# config.yaml — one deployment, one stack instance
 backends:
   claude:  {enabled: true,  model: claude-opus-4}
   gpt:     {enabled: false}
@@ -125,126 +132,130 @@ tools:
   web_search:  {enabled: false}
 
 auth:
-  mode: single_user   # nebo: oauth_whitelist
+  mode: single_user   # or: oauth_whitelist
   whitelist: []
 ```
 
-`builder.py` načte a validuje `config.yaml` proti Pydantic modelu a z něj
-vyrenderuje (Jinja2) tři artefakty, které jde rovnou spustit:
+`builder.py` loads and validates `config.yaml` against the Pydantic model
+and renders (Jinja2) three artifacts from it that can be run directly:
 
-- `compose.yaml` — jen služby, které daná konfigurace skutečně potřebuje
-  (bez `ollama` service, pokud je `enabled: false`).
-- `litellm-config.yaml` — jen povolené backendy a jejich modely.
-- runtime config pro `agent` — která `tools/*.py` se při startu zaregistrují
-  jako function-calling specs pro LLM.
+- `compose.yaml` — only the services the given configuration actually needs
+  (no `ollama` service if `enabled: false`).
+- `litellm-config.yaml` — only the enabled backends and their models.
+- runtime config for `agent` — which `tools/*.py` get registered at startup
+  as function-calling specs for the LLM.
 
-Výsledek: přidat/odebrat backend nebo nástroj je změna jednoho pole v YAML a
-opětovné spuštění builderu, ne ruční úprava čtyř souborů najednou. Builder
-sám neběží jako služba — je to jednorázový (CI/lokální) krok před
+Result: adding/removing a backend or tool is a one-field change in YAML plus
+re-running the builder, not a manual edit of four files at once. The builder
+itself doesn't run as a service — it's a one-off (CI/local) step before
 `docker compose up` / `podman compose up`.
 
-## §5 Výstupní soubory a stahování
+## §5 Output files and downloads
 
-Výsledkem konverzace nemusí být jen text v chatu — je to formální teorie,
-typeset důkaz, nebo rozpracovaná kostra článku. To všechno musí jít z UI
-stáhnout.
+The result of a conversation need not be just text in the chat — it can be a
+formal theory, a typeset proof, or a draft paper skeleton. All of that must
+be downloadable from the UI.
 
-| Artefakt | Vzniká jak | Formát |
+| Artifact | How it's produced | Format |
 |---|---|---|
-| Formální teorie | agentem ověřený/vytvořený Isabelle zdroj | `.thy` |
-| Typeset důkaz | Isabelle vlastní document-preparation (`isabelle build -D`) — stejný LaTeX, co Isabelle už potřebuje pro svou dokumentaci, ne nová závislost | PDF |
-| Kostra článku | LLM návrh (best-effort, neformální), volitelně sazba stejným LaTeX toolchainem | Markdown / PDF |
+| Formal theory | agent-verified/created Isabelle source | `.thy` |
+| Typeset proof | Isabelle's own document preparation (`isabelle build -D`) — the same LaTeX Isabelle already needs for its own documentation, not a new dependency | PDF |
+| Paper skeleton | LLM draft (best-effort, informal), optionally typeset with the same LaTeX toolchain | Markdown / PDF |
 
-Mechanismus je záměrně bez nové komponenty: agent uloží výstup do
-`data/<user_id>/artifacts/` a do odpovědi v chatu vloží obyčejný markdown
-odkaz s podepsaným, časově omezeným tokenem (jméno artefaktu + `user_id` +
-expirace, HMAC) — stejně jako presigned URL u S3. Open WebUI takový odkaz
-vykreslí jako klikatelný link bez jakéhokoli pluginu; klik jde přímo na
-agentův `/files/…` endpoint, ne přes WebUI. Token nese autorizaci sám, takže
-to funguje už v single-user fázi a nic se nemusí měnit, až v Fázi 4 přibude
-OAuth.
+The mechanism deliberately introduces no new component: the agent saves the
+output to `data/<user_id>/artifacts/` and inserts a plain markdown link into
+the chat response with a signed, time-limited token (artifact name +
+`user_id` + expiry, HMAC) — just like a presigned S3 URL. Open WebUI renders
+such a link as a clickable link without any plugin; clicking goes directly
+to the agent's `/files/…` endpoint, not through WebUI. The token carries its
+own authorization, so it already works in the single-user phase and nothing
+needs to change once OAuth is added in Phase 4.
 
-## §6 Kontejnery: Docker i Podman
+## §6 Containers: Docker and Podman
 
-Jeden `compose.yaml`, žádná enginu-specifická rozšíření.
+One `compose.yaml`, no engine-specific extensions.
 
-- Drží se čisté Compose Specification — žádné swarm/bake featury, které
-  Podman nečte.
-- Named volumes místo bind mountů s pevným UID — rootless Podman mapuje UID
-  jinak než Docker.
-- Podman od v4 umí `podman compose` (delegace na podman-compose/docker-compose)
-  nad stejným souborem — reálně odzkoušet na obou enginech, nejčastější
-  zádrhel bývá SELinux `:Z` label na volumech, který Docker nepotřebuje.
+- Stick to the plain Compose Specification — no swarm/bake features that
+  Podman doesn't read.
+- Named volumes instead of bind mounts with a fixed UID — rootless Podman
+  maps UIDs differently than Docker.
+- Since v4, Podman supports `podman compose` (delegating to
+  podman-compose/docker-compose) over the same file — test on both engines
+  in practice; the most common snag is the SELinux `:Z` label on volumes,
+  which Docker doesn't need.
 
-## §7 Stav a bezpečnost
+## §7 State and security
 
-- API klíče pro Claude/GPT/Gemini žijí jen v `llm-gateway`, nikdy v
-  konfiguraci WebUI.
-- Jen `agent` má síťový přístup pro web search a stahování knihoven —
-  Isabelle kontejner nemusí mít internet vůbec.
-- `isabelle server` je navíc vázaný jen na `localhost` sdíleného network
-  namespace s agentem (viz §2) — jeho port se nepublikuje ani do zbytku
-  stacku, ani na hostitele. Menší attack surface, než kdyby šlo o běžnou
-  síťovou službu.
-- Perzistentní stav (konverzace, stažené AFP entries, Isabelle heapy,
-  výstupní artefakty z §5) ukládán per-uživatel od začátku:
-  `data/<user_id>/…`, ne do jednoho sdíleného adresáře.
-- LiteLLM později umí per-user virtuální klíče a kvóty — nemusí se řešit v
-  MVP, ale k dispozici je.
+- API keys for Claude/GPT/Gemini live only in `llm-gateway`, never in the
+  WebUI configuration.
+- Only `agent` has network access for web search and downloading libraries —
+  the Isabelle container doesn't need internet access at all.
+- `isabelle server` is additionally bound only to `localhost` of the network
+  namespace shared with the agent (see §2) — its port isn't published
+  either to the rest of the stack or to the host. A smaller attack surface
+  than if it were an ordinary network service.
+- Persistent state (conversations, downloaded AFP entries, Isabelle heaps,
+  output artifacts from §5) is stored per-user from the start:
+  `data/<user_id>/…`, not in a single shared directory.
+- LiteLLM later supports per-user virtual keys and quotas — doesn't need to
+  be addressed in the MVP, but is available.
 
-## §8 Omezení: důkazy z jiných systémů
+## §8 Limitation: proofs from other systems
 
-Hledání "existujících formálních důkazů na webu" má dvě velmi odlišné
-obtížnosti.
+Searching for "existing formal proofs on the web" has two very different
+levels of difficulty.
 
-**Mechanické — AFP.** Pokud je důkaz už v Isabelle/HOL (typicky AFP entry),
-jde o stažení + zkompilování přes `isabelle server`. Buď to projde jádrem,
-nebo ne — žádná nejistota navíc.
+**Mechanical — AFP.** If the proof is already in Isabelle/HOL (typically an
+AFP entry), it's a matter of downloading + compiling via `isabelle server`.
+It either passes the kernel or it doesn't — no additional uncertainty.
 
-**Best-effort — jiný formální systém.** Pokud je důkaz v Lean/mathlib, Coq,
-Metamath apod., neexistuje obecný rozhodovací postup, jak ho převést do
-Isabelle/HOL — mezi systémy s různými logickými jádry to ani nemusí být
-matematicky rozhodnutelná úloha. Agent proto může nabídnout jen
-**překlad/reformulaci pomocí LLM**, ne garantovaný převod. Překlad se nikdy
-nepočítá jako důkaz sám o sobě — platí, jen pokud výsledný Isabelle skript
-znovu projde jádrem (viz úvodní poznámka o LCF jádru).
+**Best-effort — another formal system.** If the proof is in Lean/mathlib,
+Coq, Metamath, etc., there's no general decision procedure for converting it
+into Isabelle/HOL — between systems with different logical kernels, this may
+not even be a mathematically decidable problem. The agent can therefore only
+offer **translation/reformulation via the LLM**, not a guaranteed
+conversion. A translation never counts as a proof on its own — it holds only
+if the resulting Isabelle script passes the kernel again (see the opening
+note about the LCF kernel).
 
-## §9 Fáze implementace
+## §9 Implementation phases
 
-0. **WebUI + LiteLLM.** Minimální `config.yaml` (jeden backend) → builder
-   vygeneruje `compose.yaml`; Open WebUI napojené přes LiteLLM, ověřit LaTeX
-   rendering v konverzaci.
-1. **Isabelle/HOL + AFP.** Image s Isabelle a stáhnutou AFP, `isabelle server`
-   nahoře, ruční smoke test (připojení, kontrola jedné teorie).
-2. **Agent služba.** FastAPI agent s tool-calling smyčkou a nástroji pro
-   Isabelle; `user_id`/`session_id` v kontraktu od první verze; artefakty a
-   signed download odkazy z §5.
-3. **AFP search/fetch + web search.** Vyhledávání v AFP indexu, stahování
-   entries; obecný web search nástroj pro externí knihovny (best-effort
-   větev, §8).
-4. **Hardening.** OAuth + whitelist v Open WebUI, pokud přibydou další
-   uživatelé; revize síťové izolace agenta.
+0. **WebUI + LiteLLM.** Minimal `config.yaml` (one backend) → the builder
+   generates `compose.yaml`; Open WebUI connected via LiteLLM, verify LaTeX
+   rendering in the conversation.
+1. **Isabelle/HOL + AFP.** Image with Isabelle and a downloaded AFP,
+   `isabelle server` running, manual smoke test (connection, checking one
+   theory).
+2. **Agent service.** FastAPI agent with the tool-calling loop and tools for
+   Isabelle; `user_id`/`session_id` in the contract from the first version;
+   artifacts and signed download links from §5.
+3. **AFP search/fetch + web search.** Searching the AFP index, downloading
+   entries; a general web search tool for external libraries (best-effort
+   branch, §8).
+4. **Hardening.** OAuth + whitelist in Open WebUI if more users are added;
+   review of the agent's network isolation.
 
-## §10 Otevřené otázky
+## §10 Open questions
 
-- **isabelle-client (Python):** ověřeno, že existuje a je aktivně udržovaný
-  ([inpefess/isabelle-client](https://github.com/inpefess/isabelle-client),
-  PyPI `isabelle-client`, ~1.1.1, Python 3.6+) — zbývá ověřit konkrétní
-  kompatibilitu s Isabelle2025-2 až při implementaci Fáze 2.
-- **Zdroj pro web search:** která search API/služba pro nástroj
-  `web_search_proofs` — ovlivní náklady a rate limity.
-- **AFP indexace:** stačí statický index entries z isa-afp.org, nebo
-  chceme nad ním i sémantické vyhledávání?
-- **OAuth provider pro Fázi 4:** Google/GitHub/generic OIDC — volba až bude
-  víc uživatelů.
-- **Builder:** šablonování přes Jinja2 je výchozí volba, ale ověřit, než se
-  v něm natvoří hodně šablon — i zda se schéma verzuje (co se stane se
-  starým `config.yaml` při rozšíření schématu).
-- **LaTeX toolchain pro §5:** plný TeXLive (velký image) vs. odlehčená
-  alternativa (např. Tectonic) pro sazbu PDF výstupů — volba ovlivní
-  velikost Isabelle image.
+- **isabelle-client (Python):** confirmed to exist and be actively
+  maintained ([inpefess/isabelle-client](https://github.com/inpefess/isabelle-client),
+  PyPI `isabelle-client`, ~1.1.1, Python 3.6+) — specific compatibility with
+  Isabelle2025-2 still needs to be verified during Phase 2 implementation.
+- **Source for web search:** which search API/service for the
+  `web_search_proofs` tool — affects cost and rate limits.
+- **AFP indexing:** is a static index of entries from isa-afp.org enough, or
+  do we also want semantic search over it?
+- **OAuth provider for Phase 4:** Google/GitHub/generic OIDC — a choice to
+  make once there are more users.
+- **Builder:** templating via Jinja2 is the default choice, but verify it
+  before it accumulates many templates — also whether the schema is
+  versioned (what happens to an old `config.yaml` when the schema is
+  extended).
+- **LaTeX toolchain for §5:** full TeXLive (large image) vs. a lightweight
+  alternative (e.g. Tectonic) for typesetting PDF outputs — the choice
+  affects the size of the Isabelle image.
 
 ---
 
-*Pracovní návrh — vyvíjí se s projektem. Živá verze s diagramem:
+*Working draft — evolves with the project. Live version with diagram:
 https://claude.ai/code/artifact/701ea8e1-15f2-49cc-ab90-72c9f47b2472*
