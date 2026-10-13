@@ -38,7 +38,7 @@ class FakeLLM:
 
 def _echo_registry():
     return ToolRegistry(
-        [ToolSpec(name="echo", description="d", parameters={"type": "object"}, handler=lambda u, a: json.dumps(a))]
+        [ToolSpec(name="echo", description="d", parameters={"type": "object"}, handler=lambda u, s, a: json.dumps(a))]
     )
 
 

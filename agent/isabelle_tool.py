@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,12 @@ _REGISTRATION_RE = re.compile(
 
 class IsabelleToolError(RuntimeError):
     """Raised when the sidecar can't be reached or replies unexpectedly."""
+
+
+def _check_session_id(session_id: str) -> None:
+    # It becomes a workspace directory component, so no path traversal.
+    if not session_id or session_id in (".", "..") or any(c in session_id for c in "/\\"):
+        raise IsabelleToolError(f"invalid session_id: {session_id!r}")
 
 
 def parse_registration(text: str) -> tuple[str, int, str]:
@@ -61,14 +68,26 @@ class CheckTheoryResult:
 
 
 class IsabelleTool:
-    """Checks theory source against a shared, lazily-started Isabelle session."""
+    """Checks theory source against lazily-started Isabelle sessions, one per
+    session_id (falling back to user_id) so concurrent conversations don't
+    share Isabelle-level state.
 
-    def __init__(self, server_info_path: Path, workspace_dir: Path, session: str = "HOL") -> None:
+    Sessions are capped at `max_sessions`: once the cap is hit, the least
+    recently used one is stopped to free its resources before a new one is
+    started (each Isabelle session is a real process on top of the loaded
+    heap, not free).
+    """
+
+    def __init__(
+        self, server_info_path: Path, workspace_dir: Path, session: str = "HOL", max_sessions: int = 4
+    ) -> None:
         self._server_info_path = server_info_path
         self._workspace_dir = workspace_dir
         self._session = session
+        self._max_sessions = max_sessions
         self._client: IsabelleClient | None = None
-        self._session_id: str | None = None
+        # session_key -> Isabelle session_id, ordered least- to most-recently-used.
+        self._sessions: OrderedDict[str, str] = OrderedDict()
 
     def _connect(self) -> IsabelleClient:
         if self._client is None:
@@ -76,33 +95,55 @@ class IsabelleTool:
             self._client = IsabelleClient(host, port, password)
         return self._client
 
-    def _ensure_session(self) -> str:
-        if self._session_id is None:
-            client = self._connect()
-            responses = client.session_start(session=self._session)
-            last = responses[-1]
-            if isinstance(last.response_body, SessionStartErrorResult):
-                raise IsabelleToolError(f"session_start failed: {last.response_body.message}")
-            if not isinstance(last.response_body, SessionStartRegularResult):
-                raise IsabelleToolError(f"unexpected session_start reply: {last!r}")
-            self._session_id = last.response_body.session_id
-        return self._session_id
+    def _start_session(self, client: IsabelleClient) -> str:
+        responses = client.session_start(session=self._session)
+        last = responses[-1]
+        if isinstance(last.response_body, SessionStartErrorResult):
+            raise IsabelleToolError(f"session_start failed: {last.response_body.message}")
+        if not isinstance(last.response_body, SessionStartRegularResult):
+            raise IsabelleToolError(f"unexpected session_start reply: {last!r}")
+        return last.response_body.session_id
 
-    def check_theory(self, user_id: str, theory_name: str, theory_source: str) -> CheckTheoryResult:
-        """Writes `theory_source` into the user's workspace dir and checks it.
+    def _ensure_session(self, session_key: str) -> str:
+        if session_key in self._sessions:
+            self._sessions.move_to_end(session_key)
+            return self._sessions[session_key]
+
+        client = self._connect()
+        if len(self._sessions) >= self._max_sessions:
+            _evicted_key, evicted_session_id = self._sessions.popitem(last=False)
+            try:
+                client.session_stop(session_id=evicted_session_id)
+            except Exception:
+                pass  # best-effort - a stuck sidecar shouldn't block starting a new session
+
+        session_id = self._start_session(client)
+        self._sessions[session_key] = session_id
+        return session_id
+
+    def check_theory(
+        self, user_id: str, theory_name: str, theory_source: str, session_id: str | None = None
+    ) -> CheckTheoryResult:
+        """Writes `theory_source` into the conversation's workspace dir and checks it.
 
         `theory_name` must match the `theory ... begin ... end` header inside
         `theory_source` - Isabelle derives the theory's name from the file.
+        `session_id`, when given, scopes both the Isabelle session and the
+        workspace dir to the conversation rather than just the user.
         """
-        client = self._connect()
-        session_id = self._ensure_session()
+        if session_id is not None:
+            _check_session_id(session_id)
+        session_key = session_id if session_id is not None else user_id
 
-        work_dir = self._workspace_dir / user_id
+        client = self._connect()
+        isabelle_session_id = self._ensure_session(session_key)
+
+        work_dir = self._workspace_dir / user_id if session_id is None else self._workspace_dir / user_id / session_id
         work_dir.mkdir(parents=True, exist_ok=True)
         (work_dir / f"{theory_name}.thy").write_text(theory_source)
 
         responses = client.use_theories(
-            session_id=session_id, theories=[theory_name], master_dir=str(work_dir)
+            session_id=isabelle_session_id, theories=[theory_name], master_dir=str(work_dir)
         )
         last = responses[-1]
         body = last.response_body

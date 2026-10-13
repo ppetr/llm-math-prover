@@ -22,6 +22,7 @@ class Settings:
     data_dir: Path
     signing_secret: bytes
     artifact_url_ttl: int
+    max_isabelle_sessions: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,4 +44,5 @@ class Settings:
             data_dir=Path(os.environ.get("AGENT_DATA_DIR", "/data")),
             signing_secret=secret.encode(),
             artifact_url_ttl=int(os.environ.get("AGENT_ARTIFACT_URL_TTL", "3600")),
+            max_isabelle_sessions=int(os.environ.get("AGENT_MAX_ISABELLE_SESSIONS", "4")),
         )

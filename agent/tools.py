@@ -15,8 +15,8 @@ class ToolSpec:
     name: str
     description: str
     parameters: dict
-    # (user_id, arguments) -> result text fed back to the LLM as a tool message
-    handler: Callable[[str, dict], str]
+    # (user_id, session_id, arguments) -> result text fed back to the LLM as a tool message
+    handler: Callable[[str, str | None, dict], str]
 
     def as_openai_tool(self) -> dict:
         return {
@@ -30,11 +30,11 @@ class ToolSpec:
 
 
 def build_isabelle_check_theory_tool(isabelle_tool: IsabelleTool, artifacts: ArtifactStore) -> ToolSpec:
-    def handler(user_id: str, arguments: dict) -> str:
+    def handler(user_id: str, session_id: str | None, arguments: dict) -> str:
         theory_name = arguments["theory_name"]
         theory_source = arguments["theory_source"]
         try:
-            result = isabelle_tool.check_theory(user_id, theory_name, theory_source)
+            result = isabelle_tool.check_theory(user_id, theory_name, theory_source, session_id=session_id)
         except IsabelleToolError as exc:
             return json.dumps({"ok": False, "errors": [f"tool error: {exc}"]})
         if result.ok:
@@ -74,8 +74,8 @@ class ToolRegistry:
     def openai_tools(self) -> list[dict]:
         return [spec.as_openai_tool() for spec in self._specs.values()]
 
-    def call(self, name: str, user_id: str, arguments: dict) -> str:
+    def call(self, name: str, user_id: str, session_id: str | None, arguments: dict) -> str:
         spec = self._specs.get(name)
         if spec is None:
             return json.dumps({"error": f"unknown tool: {name}"})
-        return spec.handler(user_id, arguments)
+        return spec.handler(user_id, session_id, arguments)

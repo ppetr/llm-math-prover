@@ -78,7 +78,7 @@ def run_chat_completion(
                 arguments = json.loads(function["arguments"])
             except json.JSONDecodeError:
                 arguments = {}
-            result = registry.call(function["name"], user_id, arguments)
+            result = registry.call(function["name"], user_id, request.session_id, arguments)
             messages.append(
                 {"role": "tool", "tool_call_id": tool_call["id"], "content": result}
             )
@@ -134,6 +134,7 @@ def build_app() -> FastAPI:
         server_info_path=settings.isabelle_server_info_path,
         workspace_dir=settings.isabelle_workspace_dir,
         session=settings.isabelle_session,
+        max_sessions=settings.max_isabelle_sessions,
     )
     artifacts = ArtifactStore(settings.data_dir, settings.signing_secret, settings.artifact_url_ttl)
     registry = ToolRegistry([build_isabelle_check_theory_tool(isabelle_tool, artifacts)])
