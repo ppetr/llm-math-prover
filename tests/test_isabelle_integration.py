@@ -12,9 +12,13 @@ Known host issue (diagnosed 2026-10-11): on a btrfs Docker data-root,
 `session_start` can hang indefinitely at "Starting session HOL ..." with
 ~0% CPU - a btrfs-COW / SQLite-WAL incompatibility hitting Isabelle's
 build-log sqlite files once overlay2 copies them up into the writable
-layer. Worked around below with `--tmpfs` over both log directories (see
-isabelle/README.md for the full explanation). That makes every fresh
-container rebuild HOL from source once instead of hanging.
+layer. Worked around below by mounting named volumes with chattr +C
+(no-COW) over both log directories (see isabelle/README.md for the full
+explanation and one-time setup). Being no-COW rather than tmpfs, these
+also persist across container instances, so a session whose build-log
+state is still valid gets recognized as such and isn't rebuilt from
+source on every single test run - only the first time, or after the
+image/AFP version changes.
 
 Known host issue (diagnosed 2026-10-12): the unbounded JVM/ML heap used
 by a from-scratch rebuild (4GB+ JVM, unbounded PolyML) OOM-killed the host
@@ -42,15 +46,25 @@ pytestmark = pytest.mark.integration
 
 IMAGE = "isabelle-afp"
 SESSION_TIMEOUT = 1800
-TMPFS_MOUNTS = (
+HEAPLOG_MOUNTS = (
     # Mount exactly these two log/ subdirectories, not their parents - see
     # isabelle/README.md. Their parents also hold the AFP component
     # registration and compiled heap binaries, neither of which is
-    # disposable; only the SQLite build-log dbs under log/ are.
-    "--tmpfs",
-    "/home/isabelle/.isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777",
-    "--tmpfs",
-    "/home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777",
+    # disposable; only the SQLite build-log dbs under log/ are affected by
+    # the btrfs-COW/SQLite-WAL hang these volumes work around.
+    #
+    # Named (not tmpfs) so the build-log state survives across container
+    # instances - that's what lets `isabelle build` recognize an
+    # already-built heap as still valid and skip rebuilding it on the next
+    # test run. Requires chattr +C on each volume's host directory (done
+    # once, out of band - see isabelle/README.md) for the same btrfs
+    # reason tmpfs used to work around.
+    "--mount",
+    "type=volume,source=isabelle-afp-user-heaplog,"
+    "destination=/home/isabelle/.isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log",
+    "--mount",
+    "type=volume,source=isabelle-afp-dist-heaplog,"
+    "destination=/home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log",
 )
 
 
@@ -63,8 +77,16 @@ def _image_exists() -> bool:
     return result.returncode == 0
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="function")
 def isabelle_container():
+    # function-scoped, not module-scoped: a session_start that times out
+    # leaves its poly build process running server-side (disconnecting the
+    # client does not kill it - see module docstring), and if the next
+    # test reused the same container, it would contend with that orphaned
+    # process for the same heap-log database. A fresh container per test
+    # guarantees that orphan gets killed before the next test starts; the
+    # named HEAPLOG_MOUNTS volumes still make the heap cache itself
+    # persist across these fresh containers.
     if not _docker_available():
         pytest.skip("docker not available")
     if not _image_exists():
@@ -72,7 +94,7 @@ def isabelle_container():
 
     name = f"isabelle-afp-test-{uuid.uuid4().hex[:8]}"
     subprocess.run(
-        ["docker", "run", "--rm", "-d", "--name", name, *TMPFS_MOUNTS, IMAGE], check=True
+        ["docker", "run", "--rm", "-d", "--name", name, *HEAPLOG_MOUNTS, IMAGE], check=True
     )
     try:
         _wait_until_execable(name)

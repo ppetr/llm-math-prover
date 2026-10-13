@@ -18,12 +18,26 @@ docker build -t isabelle-afp isabelle/
 This downloads ~70 MB (AFP) on top of the base Isabelle image and can take a
 while the first time. Verified working with Docker (2026-10-10).
 
-## Running: `--tmpfs` is required on this host
+## Running: no-COW volumes over `log/` are required on this host
+
+One-time setup (host-level, survives across container instances but not
+`docker volume rm`):
+
+```sh
+docker volume create isabelle-afp-user-heaplog
+docker volume create isabelle-afp-dist-heaplog
+sudo chattr +C "$(docker volume inspect isabelle-afp-user-heaplog --format '{{.Mountpoint}}')"
+sudo chattr +C "$(docker volume inspect isabelle-afp-dist-heaplog --format '{{.Mountpoint}}')"
+```
+
+`chattr +C` must run while each volume directory is still empty - btrfs
+only makes *new* files inherit no-COW from their parent directory, so
+setting it after the volume has been populated is too late.
 
 ```sh
 docker run --rm -d --name isabelle-afp \
-  --tmpfs /home/isabelle/.isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777 \
-  --tmpfs /home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log:uid=1001,gid=1001,mode=1777 \
+  --mount type=volume,source=isabelle-afp-user-heaplog,destination=/home/isabelle/.isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log \
+  --mount type=volume,source=isabelle-afp-dist-heaplog,destination=/home/isabelle/Isabelle/heaps/polyml-5.9.2_x86_64_32-linux/log \
   isabelle-afp
 docker exec -it isabelle-afp Isabelle/bin/isabelle client -n agent
 ```
@@ -38,8 +52,7 @@ the Dockerfile). On this host's btrfs-backed Docker data-root, opening
 those existing files through overlay2's copy-up hangs indefinitely at
 ~0% CPU (`docker stats`) - not a slow build, a genuine stall. It also once
 surfaced as a hard `SQLITE_BUSY: database is locked` instead of hanging.
-Mounting tmpfs over just these two `log/` directories sidesteps btrfs for
-those files entirely and the stall disappears.
+No-COW sidesteps btrfs for those files entirely and the stall disappears.
 
 **Mount exactly these two `log/` subdirectories, not their parents.**
 `~/.isabelle` also holds `etc/components` (the AFP registration from
@@ -49,20 +62,27 @@ neither is disposable. An earlier version of this fix mounted tmpfs over
 the whole `~/.isabelle` directory, which wiped both of those on every
 restart; verified fixed by narrowing the mount to just `log/`.
 
-**Tradeoff:** tmpfs starts empty, so Isabelle no longer trusts the
-pre-built HOL heap as current and rebuilds it from source on every fresh
-container (confirmed: progresses normally through each theory, finishing
-in a few minutes, not instant but no longer hanging). The Dockerfile's
-`isabelle build -b` step is still worth keeping as a build-time correctness
-check, even though it no longer buys a fast container start on this host.
+**Why named volumes, not tmpfs (revised 2026-10-12):** tmpfs also sidesteps
+btrfs, but starts empty on every container, so Isabelle never trusts the
+pre-built heap as current and rebuilds HOL from source on *every* fresh
+container - confirmed working (no hang), just always slow. A named volume
+with `chattr +C` instead keeps the build-log database on real (no-COW)
+storage, so it survives container restarts: on first use Docker seeds it
+from the image's own baked-in log (from the Dockerfile's `isabelle build -b`
+step), and once a session's been built once, later containers recognize
+it as still valid and skip rebuilding it - only a changed image/AFP
+version forces a rebuild again. Remove the volumes
+(`docker volume rm isabelle-afp-user-heaplog isabelle-afp-dist-heaplog`)
+to force a clean rebuild on demand.
 
 If you move Docker's data-root to a non-btrfs (or no-COW-flagged)
-filesystem, these `--tmpfs` flags should become unnecessary and container
-starts should go back to being fast - not verified either way yet.
+filesystem, none of this (nor the `chattr +C` step) should be necessary -
+not verified either way yet.
 
 ## Memory: heap caps + host swap are required on this host
 
-That same fresh-rebuild-on-every-start (above) has an unbounded JVM
+A from-scratch HOL rebuild (above, now only on the first run or after an
+image/AFP change) has an unbounded JVM
 (`isabelle server`'s `ISABELLE_TOOL_JAVA_OPTIONS`, 4GB default) and an
 unbounded PolyML build process (`ML_OPTIONS`, no default max at all) - on
 this host's 15GB RAM, building HOL this way reliably OOM-killed the host
