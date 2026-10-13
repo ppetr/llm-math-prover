@@ -96,7 +96,7 @@ Pět voleb, které určují tvar zbytku systému.
 |---|---|---|
 | Lokální modely | Jen cloud teď, Ollama volitelně později | Lokální HW na silné modely nestačí; cloud LLM ale nemá matematické nástroje. Ollama se připojí stejným OpenAI-kompatibilním rozhraním, žádný refaktor. |
 | Agent vrstva | Samostatná FastAPI služba | Plná kontrola nad tool-callingem a nad protokolem `isabelle server`, nezávislá na tom, co umí Open WebUI nativně. |
-| Uživatelé | Single-user teď, multi-user připraveno | Open WebUI má OAuth + whitelist nativně. `user_id`/`session_id` je povinný parametr v agentu i v Isabelle session od první verze, i když dnes nese jednu pevnou hodnotu. |
+| Uživatelé | Single-user teď, multi-user připraveno | Open WebUI má OAuth + whitelist nativně. `user_id`/`session_id` je povinný parametr v agentu i v Isabelle session od první verze. `session_id` nyní skutečně oddělí Isabelle session (a workspace adresář) jedné konverzace od ostatních, s LRU stropem na počet souběžných sessions (`AGENT_MAX_ISABELLE_SESSIONS`). |
 | Sestavení stacku | Generovat z konfiguračního schématu (§4), ne ručně psát compose | Jedna instance = jeden `config.yaml` + spuštění builderu. Stejný Pydantic model validuje config i řídí runtime agenta — jeden zdroj pravdy, ne čtyři soubory k ruční synchronizaci. |
 | Stahování výstupů | Signed, časově omezené odkazy přímo na agenta (§5) | Žádný WebUI plugin — Open WebUI jen vykreslí markdown link. Token nese autorizaci sám, bez závislosti na sdíleném auth cookie s WebUI, takže funguje stejně v single-user i multi-user fázi. |
 
