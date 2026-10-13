@@ -1,0 +1,19 @@
+backends:
+  claude:
+    enabled: true
+    model: "claude-sonnet-5"  # check this is still current before relying on it
+  gpt:
+    enabled: false
+  gemini:
+    enabled: false
+  ollama:
+    enabled: false
+
+tools:
+  isabelle: {enabled: true}
+  afp_search: {enabled: false}
+  web_search: {enabled: false}
+
+auth:
+  mode: single_user
+  whitelist: []
