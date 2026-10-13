@@ -51,4 +51,25 @@ RUN Isabelle/bin/isabelle build -b HOL Example-Submission
 # Documentation only - EXPOSE does not make a localhost-bound service
 # reachable from other containers, see the sidecar note above.
 EXPOSE 4443
-ENTRYPOINT ["Isabelle/bin/isabelle", "server", "-n", "agent", "-p", "4443", "-L", "/home/isabelle/server.log"]
+
+# The server prints its one-line registration (name, port, randomly
+# generated password) to its own stdout on startup - that's the only place
+# it appears, "-L" only logs later session events, not this line. The
+# agent (Phase 2) is a separate container that shares our network
+# namespace but not our filesystem, so it can't read it from
+# ~/.isabelle/servers.db like `isabelle client` does - tee stdout into a
+# file on a shared volume (see isabelle/README.md) instead, which the
+# agent polls and parses to get the connection info it needs.
+RUN mkdir -p /home/isabelle/server-info
+
+# Workspace where the agent drops .thy files for `use_theories` to check -
+# also a shared volume, so pre-create it here: Docker seeds a fresh named
+# volume from whatever already exists at its mount point in the image,
+# otherwise it would land root-owned and unwritable. World-writable
+# because the agent container (different image, different uid) needs to
+# write here too - it's a scratch dir for theory text, not sensitive data.
+USER root
+RUN mkdir -p /isabelle-workspace && chmod 777 /isabelle-workspace
+USER isabelle
+
+ENTRYPOINT ["sh", "-c", "exec Isabelle/bin/isabelle server -n agent -p 4443 -L /home/isabelle/server.log | tee /home/isabelle/server-info/registration.log"]

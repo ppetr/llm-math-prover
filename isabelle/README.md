@@ -79,6 +79,28 @@ If you move Docker's data-root to a non-btrfs (or no-COW-flagged)
 filesystem, none of this (nor the `chattr +C` step) should be necessary -
 not verified either way yet.
 
+## Agent discovery: shared `server-info` volume
+
+The agent (Phase 2) runs as a separate container sharing only this
+container's network namespace (`network_mode: "service:isabelle"`), not
+its filesystem, so it cannot read `~/.isabelle/servers.db` the way
+`isabelle client` does. The entrypoint instead tees its startup line
+(`server "agent" = 127.0.0.1:4443 (password "...")`, the only place that
+password is ever printed) onto a small shared volume:
+
+```sh
+docker volume create isabelle-server-info
+docker run --rm -d --name isabelle \
+  --mount type=volume,source=isabelle-server-info,destination=/home/isabelle/server-info \
+  ...
+  isabelle-afp
+```
+
+The agent mounts the same volume read-only, polls
+`server-info/registration.log` until the line appears, and parses
+host/port/password out of it to connect directly over TCP (no Docker
+socket access needed). See `agent/isabelle_tool.py`.
+
 ## Memory: heap caps + host swap are required on this host
 
 A from-scratch HOL rebuild (above, now only on the first run or after an
