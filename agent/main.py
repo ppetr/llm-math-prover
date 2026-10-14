@@ -58,9 +58,8 @@ def _wrap_response(model: str, message: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def run_chat_completion(
-    request: ChatCompletionRequest, llm_client: LLMClient, registry: ToolRegistry
-) -> dict[str, Any]:
+def _run_tool_loop(request: ChatCompletionRequest, llm_client: LLMClient, registry: ToolRegistry):
+    """Drives the LLM/tool loop, yielding ("tool_call"|"tool_result"|"final", ...) events."""
     user_id = request.user or "anonymous"
     messages: list[dict] = [m.model_dump(exclude_none=True) for m in request.messages]
     tools = registry.openai_tools()
@@ -69,7 +68,8 @@ def run_chat_completion(
         message = llm_client.chat(model=request.model, messages=messages, tools=tools)
         tool_calls = message.get("tool_calls")
         if not tool_calls:
-            return _wrap_response(request.model, message)
+            yield ("final", message)
+            return
 
         messages.append(message)
         for tool_call in tool_calls:
@@ -78,11 +78,23 @@ def run_chat_completion(
                 arguments = json.loads(function["arguments"])
             except json.JSONDecodeError:
                 arguments = {}
+            yield ("tool_call", function["name"], arguments)
             result = registry.call(function["name"], user_id, request.session_id, arguments)
+            yield ("tool_result", function["name"], result)
             messages.append(
                 {"role": "tool", "tool_call_id": tool_call["id"], "content": result}
             )
 
+    raise HTTPException(status_code=502, detail="tool-calling loop did not converge")
+
+
+def run_chat_completion(
+    request: ChatCompletionRequest, llm_client: LLMClient, registry: ToolRegistry
+) -> dict[str, Any]:
+    for kind, *rest in _run_tool_loop(request, llm_client, registry):
+        if kind == "final":
+            (message,) = rest
+            return _wrap_response(request.model, message)
     raise HTTPException(status_code=502, detail="tool-calling loop did not converge")
 
 
