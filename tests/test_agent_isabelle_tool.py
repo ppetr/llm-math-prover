@@ -110,6 +110,42 @@ def test_check_theory_evicts_least_recently_used_session_past_the_cap(tmp_path):
     assert len(client.started) == 3
 
 
+def test_check_theory_wraps_transport_errors_from_the_client(tmp_path):
+    tool, client = _tool_with_fake_client(tmp_path)
+
+    def boom(session_id, theories, master_dir):
+        raise ValueError("Unexpected response from Isabelle: ")
+
+    client.use_theories = boom
+
+    with pytest.raises(IsabelleToolError) as exc_info:
+        tool.check_theory("alice", "T", "theory T imports Main begin end", session_id="conv-1")
+
+    message = str(exc_info.value)
+    assert "T" in message
+    assert "ValueError" in message
+    assert "Unexpected response from Isabelle" in message
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+def test_check_theory_invalidates_cached_client_and_sessions_after_transport_error(tmp_path):
+    tool, client = _tool_with_fake_client(tmp_path)
+    tool.check_theory("alice", "T", "theory T imports Main begin end", session_id="conv-1")
+    assert tool._client is client
+    assert "conv-1" in tool._sessions
+
+    client.use_theories = lambda session_id, theories, master_dir: (_ for _ in ()).throw(ValueError("boom"))
+
+    with pytest.raises(IsabelleToolError):
+        tool.check_theory("alice", "T", "theory T imports Main begin end", session_id="conv-1")
+
+    # A restarted isabelle server hands out a new port/password and forgets
+    # every session - so the stale client and session map must be gone,
+    # not silently reused against a server that no longer knows about them.
+    assert tool._client is None
+    assert tool._sessions == {}
+
+
 def test_check_theory_rejects_path_traversal_in_session_id(tmp_path):
     tool, _client = _tool_with_fake_client(tmp_path)
 

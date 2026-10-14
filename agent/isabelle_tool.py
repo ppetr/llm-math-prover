@@ -9,11 +9,13 @@ a shared volume instead of reading ~/.isabelle/servers.db like
 
 from __future__ import annotations
 
+import logging
 import re
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, TypeVar
 
 from isabelle_client import IsabelleClient
 from isabelle_client.data_models import (
@@ -23,13 +25,34 @@ from isabelle_client.data_models import (
     UseTheoriesResults,
 )
 
+logger = logging.getLogger(__name__)
+
 _REGISTRATION_RE = re.compile(
     r'server "(?P<name>[^"]*)" = (?P<host>[^:\s]+):(?P<port>\d+) \(password "(?P<password>[^"]*)"\)'
 )
 
+T = TypeVar("T")
+
 
 class IsabelleToolError(RuntimeError):
     """Raised when the sidecar can't be reached or replies unexpectedly."""
+
+
+def _call_client(description: str, fn: Callable[[], T]) -> T:
+    """Runs an isabelle_client call, turning transport/protocol failures
+    (dropped socket, malformed reply, ...) into an IsabelleToolError the
+    agent can report back as a normal tool result instead of crashing the
+    whole request. The original exception is logged with its traceback and
+    chained via `from` so `docker compose logs agent` still shows the real
+    cause, not just "unexpected response".
+    """
+    try:
+        return fn()
+    except IsabelleToolError:
+        raise
+    except Exception as exc:
+        logger.exception("isabelle_client call failed: %s", description)
+        raise IsabelleToolError(f"{description}: {type(exc).__name__}: {exc}") from exc
 
 
 def _check_session_id(session_id: str) -> None:
@@ -95,8 +118,20 @@ class IsabelleTool:
             self._client = IsabelleClient(host, port, password)
         return self._client
 
+    def _invalidate_connection(self) -> None:
+        """Drops the cached client/sessions after a transport-level failure.
+
+        server-entrypoint.sh restarts a crashed `isabelle server` in place
+        (same container, so `agent`'s shared network namespace survives -
+        see isabelle/README.md), handing out a fresh port/password and
+        discarding every session. The next call re-reads registration.log
+        and starts fresh sessions instead of reusing now-dead ones.
+        """
+        self._client = None
+        self._sessions.clear()
+
     def _start_session(self, client: IsabelleClient) -> str:
-        responses = client.session_start(session=self._session)
+        responses = _call_client("session_start", lambda: client.session_start(session=self._session))
         last = responses[-1]
         if isinstance(last.response_body, SessionStartErrorResult):
             raise IsabelleToolError(f"session_start failed: {last.response_body.message}")
@@ -104,12 +139,11 @@ class IsabelleTool:
             raise IsabelleToolError(f"unexpected session_start reply: {last!r}")
         return last.response_body.session_id
 
-    def _ensure_session(self, session_key: str) -> str:
+    def _ensure_session(self, client: IsabelleClient, session_key: str) -> str:
         if session_key in self._sessions:
             self._sessions.move_to_end(session_key)
             return self._sessions[session_key]
 
-        client = self._connect()
         if len(self._sessions) >= self._max_sessions:
             _evicted_key, evicted_session_id = self._sessions.popitem(last=False)
             try:
@@ -135,20 +169,29 @@ class IsabelleTool:
             _check_session_id(session_id)
         session_key = session_id if session_id is not None else user_id
 
-        client = self._connect()
-        isabelle_session_id = self._ensure_session(session_key)
+        try:
+            client = self._connect()
+            isabelle_session_id = self._ensure_session(client, session_key)
 
-        work_dir = self._workspace_dir / user_id if session_id is None else self._workspace_dir / user_id / session_id
-        work_dir.mkdir(parents=True, exist_ok=True)
-        (work_dir / f"{theory_name}.thy").write_text(theory_source)
+            work_dir = (
+                self._workspace_dir / user_id if session_id is None else self._workspace_dir / user_id / session_id
+            )
+            work_dir.mkdir(parents=True, exist_ok=True)
+            (work_dir / f"{theory_name}.thy").write_text(theory_source)
 
-        responses = client.use_theories(
-            session_id=isabelle_session_id, theories=[theory_name], master_dir=str(work_dir)
-        )
-        last = responses[-1]
-        body = last.response_body
-        if isinstance(body, UseTheoriesErrorResult):
-            return CheckTheoryResult(ok=False, errors=[body.message])
-        if isinstance(body, UseTheoriesResults):
-            return CheckTheoryResult(ok=body.ok, errors=[m.message for m in body.errors])
-        raise IsabelleToolError(f"unexpected use_theories reply: {last!r}")
+            responses = _call_client(
+                f"use_theories({theory_name!r}, session={isabelle_session_id!r})",
+                lambda: client.use_theories(
+                    session_id=isabelle_session_id, theories=[theory_name], master_dir=str(work_dir)
+                ),
+            )
+            last = responses[-1]
+            body = last.response_body
+            if isinstance(body, UseTheoriesErrorResult):
+                return CheckTheoryResult(ok=False, errors=[body.message])
+            if isinstance(body, UseTheoriesResults):
+                return CheckTheoryResult(ok=body.ok, errors=[m.message for m in body.errors])
+            raise IsabelleToolError(f"unexpected use_theories reply: {last!r}")
+        except IsabelleToolError:
+            self._invalidate_connection()
+            raise
