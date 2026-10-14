@@ -176,3 +176,30 @@ def test_streaming_chat_completion_reports_non_convergence_as_content():
 
     contents = [c["choices"][0]["delta"].get("content") or "" for c in chunks]
     assert any("did not converge" in c for c in contents)
+
+
+def test_streaming_chat_completion_terminates_cleanly_on_unexpected_error():
+    class BoomLLM:
+        def chat(self, model, messages, tools=None):
+            raise RuntimeError("gateway exploded")
+
+        def models(self):
+            return {}
+
+    class NoArtifacts:
+        pass
+
+    app = create_app(BoomLLM(), _echo_registry(), NoArtifacts())
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"model": "m", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    ) as response:
+        assert response.status_code == 200
+        chunks = list(_sse_chunks(response))
+
+    contents = [c["choices"][0]["delta"].get("content") or "" for c in chunks]
+    assert any("gateway exploded" in c for c in contents)
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"

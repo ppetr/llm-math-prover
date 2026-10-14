@@ -157,6 +157,11 @@ def stream_chat_completion(request: ChatCompletionRequest, llm_client: LLMClient
                     yield _sse_chunk(model, {"content": content})
     except HTTPException as exc:
         yield _sse_chunk(model, {"content": _status_line("⚠️", str(exc.detail))})
+    except Exception as exc:
+        # Any other failure (gateway error, timeout, ...) must still end the
+        # SSE stream cleanly - an uncaught exception here aborts the response
+        # mid-chunk and the client sees a transfer-encoding error, not ours.
+        yield _sse_chunk(model, {"content": _status_line("⚠️", f"agent error: {exc}")})
     yield _sse_chunk(model, {}, finish_reason="stop")
     yield "data: [DONE]\n\n"
 
