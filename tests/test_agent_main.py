@@ -115,3 +115,64 @@ def test_healthz():
     app = create_app(FakeLLM(), ToolRegistry([]), NoArtifacts())
     client = TestClient(app)
     assert client.get("/healthz").json() == {"status": "ok"}
+
+
+def _sse_chunks(response):
+    for line in response.iter_lines():
+        if not line.startswith("data: "):
+            continue
+        payload = line[len("data: ") :]
+        if payload == "[DONE]":
+            return
+        yield json.loads(payload)
+
+
+def test_streaming_chat_completion_reports_tool_call_progress_then_final_content():
+    llm = FakeLLM()
+
+    class NoArtifacts:
+        pass
+
+    app = create_app(llm, _echo_registry(), NoArtifacts())
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"model": "m", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    ) as response:
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        chunks = list(_sse_chunks(response))
+
+    contents = [c["choices"][0]["delta"].get("content") for c in chunks]
+    assert any("echo" in (c or "") for c in contents)
+    assert any("final answer" in (c or "") for c in contents)
+    assert chunks[-1]["choices"][0]["finish_reason"] == "stop"
+
+
+def test_streaming_chat_completion_reports_non_convergence_as_content():
+    looping_call = {
+        "role": "assistant",
+        "tool_calls": [
+            {"id": "call1", "type": "function", "function": {"name": "echo", "arguments": "{}"}}
+        ],
+    }
+    llm = FakeLLM(turns=[looping_call] * 20)
+
+    class NoArtifacts:
+        pass
+
+    app = create_app(llm, _echo_registry(), NoArtifacts())
+    client = TestClient(app)
+
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={"model": "m", "messages": [{"role": "user", "content": "hi"}], "stream": True},
+    ) as response:
+        assert response.status_code == 200
+        chunks = list(_sse_chunks(response))
+
+    contents = [c["choices"][0]["delta"].get("content") or "" for c in chunks]
+    assert any("did not converge" in c for c in contents)

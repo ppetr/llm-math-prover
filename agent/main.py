@@ -16,7 +16,7 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent.artifacts import ArtifactError, ArtifactStore
@@ -46,6 +46,7 @@ class ChatCompletionRequest(BaseModel):
     # contract reserves it so a future conversation-scoped Isabelle session
     # can key off it instead of collapsing onto user_id.
     session_id: str | None = None
+    stream: bool = False
 
 
 def _wrap_response(model: str, message: dict[str, Any]) -> dict[str, Any]:
@@ -98,6 +99,68 @@ def run_chat_completion(
     raise HTTPException(status_code=502, detail="tool-calling loop did not converge")
 
 
+def _status_line(icon: str, text: str) -> str:
+    return f"\n{icon} {text}\n"
+
+
+def _tool_call_status(name: str, arguments: dict[str, Any]) -> str:
+    # Keep only short scalar arguments inline - fields like a full .thy
+    # source would otherwise dump the whole file into the chat.
+    bits = [
+        f"{key}={value}"
+        for key, value in arguments.items()
+        if isinstance(value, (str, int, float, bool)) and len(str(value)) <= 60
+    ]
+    args_text = f" ({', '.join(bits)})" if bits else ""
+    return _status_line("🔧", f"calling `{name}`{args_text}…")
+
+
+def _tool_result_status(name: str, result: str) -> str:
+    ok = None
+    try:
+        parsed = json.loads(result)
+        if isinstance(parsed, dict) and "ok" in parsed:
+            ok = parsed["ok"]
+    except json.JSONDecodeError:
+        pass
+    icon = "✅" if ok else "❌" if ok is False else "ℹ️"
+    return _status_line(icon, f"`{name}` done")
+
+
+def _sse_chunk(model: str, delta: dict[str, Any], finish_reason: str | None = None) -> str:
+    chunk = {
+        "id": f"chatcmpl-{uuid.uuid4().hex}",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(chunk)}\n\n"
+
+
+def stream_chat_completion(request: ChatCompletionRequest, llm_client: LLMClient, registry: ToolRegistry):
+    """SSE generator so Open WebUI shows tool-call progress instead of a blank wait."""
+    model = request.model
+    yield _sse_chunk(model, {"role": "assistant", "content": ""})
+    try:
+        for kind, *rest in _run_tool_loop(request, llm_client, registry):
+            if kind == "tool_call":
+                name, arguments = rest
+                yield _sse_chunk(model, {"content": _tool_call_status(name, arguments)})
+            elif kind == "tool_result":
+                name, result = rest
+                yield _sse_chunk(model, {"content": _tool_result_status(name, result)})
+            elif kind == "final":
+                (message,) = rest
+                content = message.get("content") or ""
+                if content:
+                    yield _sse_chunk(model, {"content": content})
+    except HTTPException as exc:
+        yield _sse_chunk(model, {"content": _status_line("⚠️", str(exc.detail))})
+    yield _sse_chunk(model, {}, finish_reason="stop")
+    yield "data: [DONE]\n\n"
+
+
 def create_app(
     llm_client: LLMClient, registry: ToolRegistry, artifacts: ArtifactStore
 ) -> FastAPI:
@@ -114,7 +177,12 @@ def create_app(
         return llm_client.models()
 
     @app.post("/v1/chat/completions")
-    def chat_completions(request: ChatCompletionRequest) -> dict[str, Any]:
+    def chat_completions(request: ChatCompletionRequest):
+        if request.stream:
+            return StreamingResponse(
+                stream_chat_completion(request, llm_client, registry),
+                media_type="text/event-stream",
+            )
         return run_chat_completion(request, llm_client, registry)
 
     @app.get("/files/{token}")
