@@ -60,6 +60,10 @@ EXPOSE 4443
 # ~/.isabelle/servers.db like `isabelle client` does - tee stdout into a
 # file on a shared volume (see isabelle/README.md) instead, which the
 # agent polls and parses to get the connection info it needs.
+#
+# A fresh registration (new port + password) is written every time the
+# server (re)starts - see server-entrypoint.sh and
+# agent/isabelle_tool.py's reconnect handling.
 RUN mkdir -p /home/isabelle/server-info
 
 # Workspace where the agent drops .thy files for `use_theories` to check -
@@ -70,6 +74,8 @@ RUN mkdir -p /home/isabelle/server-info
 # write here too - it's a scratch dir for theory text, not sensitive data.
 USER root
 RUN mkdir -p /isabelle-workspace && chmod 777 /isabelle-workspace
+COPY server-entrypoint.sh /home/isabelle/server-entrypoint.sh
+RUN chmod 755 /home/isabelle/server-entrypoint.sh
 USER isabelle
 
-ENTRYPOINT ["sh", "-c", "exec Isabelle/bin/isabelle server -n agent -p 4443 -L /home/isabelle/server.log | tee /home/isabelle/server-info/registration.log"]
+ENTRYPOINT ["/home/isabelle/server-entrypoint.sh"]

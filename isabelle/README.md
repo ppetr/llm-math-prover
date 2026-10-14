@@ -101,6 +101,14 @@ The agent mounts the same volume read-only, polls
 host/port/password out of it to connect directly over TCP (no Docker
 socket access needed). See `agent/isabelle_tool.py`.
 
+**If `isabelle server` crashes** (e.g. OOM, see below), `server-entrypoint.sh`
+restarts just that process in place rather than letting the container exit:
+restarting the *container* would recreate its network namespace, orphaning
+`agent`'s shared copy of it (`network_mode: "service:isabelle"`) until someone
+restarted `agent` too. A restarted server gets a fresh port/password, so
+`agent/isabelle_tool.py` drops its cached client and session map on the next
+transport-level failure and reconnects from the rewritten `registration.log`.
+
 ## Memory: heap caps + host swap are required on this host
 
 A from-scratch HOL rebuild (above, now only on the first run or after an
