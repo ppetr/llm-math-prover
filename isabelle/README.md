@@ -158,3 +158,20 @@ a matching `-n`, the client fails with
 
 See `tests/test_isabelle_integration.py` for the automated version
 (`pytest -m integration`).
+
+## Parallelism: threads and Sledgehammer provers
+
+`ISABELLE_THREADS` is unset, so Isabelle auto-detects the number of cores
+(`nproc`, 12 in this container as of 2026-10) and uses them for PIDE's
+future-based checking - independent proof steps across a theory are already
+checked in parallel without any config here.
+
+Sledgehammer's external provers - E, Z3, Vampire, CVC5, SPASS - ship as
+`contrib` components in the base `makarius/isabelle` image and need no
+extra installation: `isabelle getenv -a` already shows `Z3_INSTALLED=yes`,
+`E_HOME`, `VAMPIRE_HOME`, `CVC5_HOME`, `SPASS_HOME` pointing into
+`Isabelle/contrib/`. Calling `sledgehammer` picks them up automatically and
+runs them in parallel, which is the main way a single proof goal benefits
+from multiple cores (ordinary tactics like `auto`/`simp` are single-threaded
+per call). Worth remembering given the OOM history above: more provers
+running at once means more concurrent CPU/RAM load on this shared host.
