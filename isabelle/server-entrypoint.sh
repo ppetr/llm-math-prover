@@ -25,8 +25,11 @@ while true; do
     Isabelle/bin/isabelle server -n agent -p 4443 -L /home/isabelle/server.log \
         > >(tee /home/isabelle/server-info/registration.log) 2>&1 &
     child=$!
-    wait "$child"
-    status=$?
+    status=0
+    # `wait` on its own would trip `set -e` on a non-zero exit (e.g. an
+    # OOM kill) and exit this script before the loop can restart the
+    # server - exactly the case this supervisor exists to handle.
+    wait "$child" || status=$?
     echo "isabelle server exited (status $status); restarting in 1s..." >&2
     sleep 1
 done
