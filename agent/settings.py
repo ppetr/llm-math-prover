@@ -23,6 +23,7 @@ class Settings:
     signing_secret: bytes
     artifact_url_ttl: int
     max_isabelle_sessions: int
+    llm_request_timeout: float
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -45,4 +46,9 @@ class Settings:
             signing_secret=secret.encode(),
             artifact_url_ttl=int(os.environ.get("AGENT_ARTIFACT_URL_TTL", "3600")),
             max_isabelle_sessions=int(os.environ.get("AGENT_MAX_ISABELLE_SESSIONS", "4")),
+            # A long-running theory proof plus a growing conversation history
+            # can legitimately push Claude's response time well past a minute -
+            # this must stay generous, not tight, or the agent aborts calls
+            # that were going to succeed anyway (see commit history).
+            llm_request_timeout=float(os.environ.get("AGENT_LLM_TIMEOUT_SECONDS", "600")),
         )

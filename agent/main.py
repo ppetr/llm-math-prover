@@ -223,5 +223,7 @@ def build_app() -> FastAPI:
     )
     artifacts = ArtifactStore(settings.data_dir, settings.signing_secret, settings.artifact_url_ttl)
     registry = ToolRegistry([build_isabelle_check_theory_tool(isabelle_tool, artifacts)])
-    llm_client = LLMClient(settings.litellm_base_url, settings.litellm_api_key)
+    llm_client = LLMClient(
+        settings.litellm_base_url, settings.litellm_api_key, timeout=settings.llm_request_timeout
+    )
     return create_app(llm_client, registry, artifacts)
