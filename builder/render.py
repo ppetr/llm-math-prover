@@ -53,6 +53,9 @@ def render(config: StackConfig, output_dir: Path) -> None:
         "ollama_enabled": config.backends.ollama.enabled,
         "ollama_model": config.backends.ollama.model,
         "isabelle_enabled": config.tools.isabelle.enabled,
+        "webui_image": config.images.webui,
+        "litellm_image": config.images.litellm,
+        "ollama_image": config.images.ollama,
     }
 
     (output_dir / "compose.yaml").write_text(env.get_template("compose.yaml.j2").render(**context))

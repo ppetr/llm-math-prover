@@ -26,3 +26,12 @@ tools:
 auth:
   mode: single_user
   whitelist: []
+
+# Pinned upstream image tags - reproducibility over always-latest. Bump
+# these deliberately (check the project's releases first); swap in a
+# floating tag like "ghcr.io/berriai/litellm:main-stable" instead if you'd
+# rather always get the newest build.
+images:
+  webui: ghcr.io/open-webui/open-webui:v0.12.2
+  litellm: ghcr.io/berriai/litellm:v1.105.1
+  ollama: ollama/ollama:0.40.4

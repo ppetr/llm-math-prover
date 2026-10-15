@@ -52,10 +52,22 @@ class AuthConfig(BaseModel):
         return self
 
 
+class ImagesConfig(BaseModel):
+    """Pinned upstream image tags, so a fresh `docker compose up` is
+    reproducible instead of drifting with whatever the floating tag
+    currently resolves to. Bump these deliberately, not by accident.
+    """
+
+    webui: str = "ghcr.io/open-webui/open-webui:v0.12.2"
+    litellm: str = "ghcr.io/berriai/litellm:v1.105.1"
+    ollama: str = "ollama/ollama:0.40.4"
+
+
 class StackConfig(BaseModel):
     backends: BackendsConfig = Field(default_factory=BackendsConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    images: ImagesConfig = Field(default_factory=ImagesConfig)
 
     @model_validator(mode="after")
     def at_least_one_backend_enabled(self) -> "StackConfig":

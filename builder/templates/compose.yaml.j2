@@ -1,7 +1,6 @@
 services:
   webui:
-    # Pin an exact tag before relying on this outside local experimentation.
-    image: ghcr.io/open-webui/open-webui:main
+    image: {{ webui_image }}
     depends_on:
 {% if isabelle_enabled %}
       - agent
@@ -28,8 +27,7 @@ services:
     restart: unless-stopped
 
   llm-gateway:
-    # Pin an exact tag before relying on this outside local experimentation.
-    image: ghcr.io/berriai/litellm:main-stable
+    image: {{ litellm_image }}
     command: ["--config", "/app/config.yaml"]
     env_file:
       - .env
@@ -43,7 +41,7 @@ services:
 {% if ollama_enabled %}
 
   ollama:
-    image: ollama/ollama:latest
+    image: {{ ollama_image }}
     volumes:
       - ollama-data:/root/.ollama
     restart: unless-stopped
