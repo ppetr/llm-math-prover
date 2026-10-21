@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "local/{{ default_model }}",
+  "provider": {
+    "local": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "ai-math-container",
+      "options": {
+        "baseURL": "{{ api_base }}",
+        "apiKey": "{env:OPENCODE_API_KEY}"
+      },
+      "models": {
+{% for b in cloud_backends %}
+        "{{ b.name }}": { "name": "{{ b.name }}" }{{ "," if not loop.last or ollama_enabled else "" }}
+{% endfor %}
+{% if ollama_enabled %}
+        "ollama": { "name": "ollama" }
+{% endif %}
+      }
+    }
+  }
+}

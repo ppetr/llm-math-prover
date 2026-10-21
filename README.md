@@ -46,6 +46,34 @@ Once up, webui talks to the agent instead of llm-gateway directly (see
 calls the `isabelle_check_theory` tool, which only reports success if the
 Isabelle kernel actually accepted the proof.
 
+## Optional: CLI client (OpenCode)
+
+`dist/compose.yaml` also defines a `cli` service running
+[OpenCode](https://opencode.ai), an open-source terminal agent, pointed at
+the same OpenAI-compatible endpoint as webui. It's gated behind a compose
+profile so `up` never starts it, and it needs a TTY:
+
+```sh
+cd dist && docker compose --profile cli run --no-deps --rm cli
+```
+
+`--no-deps` matters once the main stack is already running (`docker compose
+up -d`): without it, `run` re-resolves the whole `cli` -> `agent` ->
+`llm-gateway` dependency chain on every invocation and ends up recreating
+`llm-gateway`, which briefly breaks every other connection to it (webui
+included) while the old container is torn down and the new one starts.
+
+For scripted/non-interactive use (e.g. debugging), OpenCode's `run`
+subcommand sends one message and exits - no TTY needed:
+
+```sh
+docker compose --profile cli run --no-deps --rm -T cli run "your prompt here"
+```
+
+It has no access to the repo or the Isabelle workspace yet - this is a chat
+client for now, not a coding agent. File/shell tool access and sandboxing
+are future work.
+
 ## Backing up user data
 
 `webui-data`, `agent-data`, and `isabelle-workspace` hold the stack's only

@@ -15,10 +15,8 @@ services:
       # it runs with network_mode: "service:isabelle" (see isabelle/README.md
       # and design doc §2), so it has no network identity of its own and is
       # only reachable at the *isabelle* service's hostname.
-      OPENAI_API_BASE_URL: http://isabelle:8000/v1
-{% else %}
-      OPENAI_API_BASE_URL: http://llm-gateway:4000/v1
 {% endif %}
+      OPENAI_API_BASE_URL: {{ api_base }}
       OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
     ports:
       - "8080:8080"
@@ -46,6 +44,29 @@ services:
       - ollama-data:/root/.ollama
     restart: unless-stopped
 {% endif %}
+
+  cli:
+    # Optional terminal agent client (https://opencode.ai), talking to the
+    # same OpenAI-compatible endpoint as webui. Not started by `up` - needs
+    # a TTY: `docker compose --profile cli run --rm cli`.
+    image: ghcr.io/anomalyco/opencode:latest
+    profiles: ["cli"]
+    depends_on:
+{% if isabelle_enabled %}
+      - agent
+{% else %}
+      - llm-gateway
+{% endif %}
+    environment:
+      OPENCODE_API_KEY: ${LITELLM_MASTER_KEY}
+      # Points at an explicit path instead of relying on the image's $HOME
+      # (the official ghcr.io/anomalyco/opencode image runs as root, but
+      # that's an implementation detail, not a documented contract).
+      OPENCODE_CONFIG: /opencode.json
+    volumes:
+      - ./opencode.json:/opencode.json:ro
+    stdin_open: true
+    tty: true
 {% if isabelle_enabled %}
 
   isabelle:

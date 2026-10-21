@@ -48,19 +48,31 @@ def render(config: StackConfig, output_dir: Path) -> None:
     )
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    isabelle_enabled = config.tools.isabelle.enabled
+    cloud_backends = _enabled_cloud_backends(config)
     context = {
-        "cloud_backends": _enabled_cloud_backends(config),
+        "cloud_backends": cloud_backends,
         "ollama_enabled": config.backends.ollama.enabled,
         "ollama_model": config.backends.ollama.model,
-        "isabelle_enabled": config.tools.isabelle.enabled,
+        "isabelle_enabled": isabelle_enabled,
+        # OpenCode needs an explicit default or it falls back to its own
+        # (opencode.ai-login-gated) Zen models instead of our provider.
+        "default_model": cloud_backends[0]["name"] if cloud_backends else "ollama",
         "webui_image": config.images.webui,
         "litellm_image": config.images.litellm,
         "ollama_image": config.images.ollama,
+        # The agent runs with network_mode: "service:isabelle" (see design
+        # doc §2), so it has no network identity of its own - reachable only
+        # at the *isabelle* service's hostname, not "agent".
+        "api_base": "http://isabelle:8000/v1" if isabelle_enabled else "http://llm-gateway:4000/v1",
     }
 
     (output_dir / "compose.yaml").write_text(env.get_template("compose.yaml.j2").render(**context))
     (output_dir / "litellm-config.yaml").write_text(
         env.get_template("litellm-config.yaml.j2").render(**context)
+    )
+    (output_dir / "opencode.json").write_text(
+        env.get_template("opencode.json.j2").render(**context)
     )
 
 
@@ -72,7 +84,10 @@ def main() -> None:
 
     config = StackConfig.from_yaml(args.config)
     render(config, args.out)
-    print(f"Wrote {args.out / 'compose.yaml'} and {args.out / 'litellm-config.yaml'}")
+    print(
+        f"Wrote {args.out / 'compose.yaml'}, {args.out / 'litellm-config.yaml'}, "
+        f"and {args.out / 'opencode.json'}"
+    )
 
 
 if __name__ == "__main__":
