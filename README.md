@@ -1,13 +1,14 @@
 # ai-math-container
 
-Config-driven container stack for a cloud-LLM agent that proves theorems with
-Isabelle/HOL. Design rationale: [docs/design/isabelle-agent-stack.md](docs/design/isabelle-agent-stack.md).
+A config-driven Docker/Podman stack that wires a cloud LLM (Claude, GPT, or
+Gemini) to a real Isabelle/HOL proof checker through tool-calling: the LLM
+can propose a theory, but it only counts as proved once Isabelle's kernel
+actually accepts it. See
+[docs/design/isabelle-agent-stack.md](docs/design/isabelle-agent-stack.md)
+for the architecture and rationale; this README only covers installing,
+configuring, and running it.
 
-Implements Phase 0 (Open WebUI + LiteLLM) and Phase 2 (agent with an Isabelle
-tool); AFP/web search tools arrive in Phase 3. Phase 1 (the `isabelle` image
-itself) is documented separately in [isabelle/README.md](isabelle/README.md).
-
-## Phase 0: generate and run
+## Quick start
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -e .
@@ -24,10 +25,14 @@ Open WebUI comes up on `http://localhost:8080`, the LiteLLM gateway on
 `http://localhost:4000`. Verify LaTeX rendering by sending a message
 containing `$$\int_0^1 x^2\,dx = \tfrac13$$` in the chat.
 
-## Phase 2: agent (Isabelle tool)
+This base setup is just Open WebUI talking to your chosen LLM through
+LiteLLM - no Isabelle yet.
 
-Set `tools.isabelle.enabled: true` in `config.yaml` before rendering, build
-both images the compose file references by name, and fill in
+## Enabling the Isabelle proof-checking tool
+
+Build the Isabelle image (see [isabelle/README.md](isabelle/README.md) for
+what it contains and host requirements) and the agent image, set
+`tools.isabelle.enabled: true` in `config.yaml`, re-render, and fill in
 `AGENT_SIGNING_SECRET` in `dist/.env` (`openssl rand -hex 32`):
 
 ```sh
@@ -41,10 +46,10 @@ isabelle/README.md *before* the first `docker compose up` - otherwise
 compose creates them as ordinary (COW) volumes and the btrfs/SQLite-WAL
 hang that fix exists for can come back.
 
-Once up, webui talks to the agent instead of llm-gateway directly (see
-`docs/design/isabelle-agent-stack.md` §2) - ask it to check a theory and it
-calls the `isabelle_check_theory` tool, which only reports success if the
-Isabelle kernel actually accepted the proof.
+Once up, webui talks to the agent instead of llm-gateway directly. Ask it
+to check a theory and it calls the `isabelle_check_theory` tool, which only
+reports success if the Isabelle kernel actually accepted the proof; a
+verified theory is saved and offered back as a downloadable `.thy` file.
 
 ## Optional: CLI client (OpenCode)
 
@@ -89,6 +94,17 @@ restore command:
 
 Requires the `zstd` CLI on the host; run `./scripts/backup-volumes.sh` with
 no arguments for the full usage.
+
+## Current limitations
+
+- `isabelle_check_theory` only checks a theory it's given directly - there's
+  no AFP or web search yet to find an existing proof on its own. The
+  `tools.afp_search`/`web_search` config flags exist but have no effect.
+- Single-user only. `auth.mode: oauth_whitelist` is accepted by the config
+  schema but not yet wired into the generated stack.
+- Only `.thy` source is downloadable; typeset PDF proofs aren't generated
+  yet.
+- The OpenCode CLI (above) is a plain chat client, not a coding agent.
 
 ## Development
 

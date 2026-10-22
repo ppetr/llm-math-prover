@@ -32,10 +32,11 @@ backends:
 tools:
   # Adds the isabelle/agent services and routes webui through the agent
   # instead of straight to llm-gateway - see isabelle/README.md and
-  # README.md "Agent (Phase 2)" before setting this true.
+  # README.md "Enabling the Isabelle proof-checking tool" before setting
+  # this true.
   isabelle: {enabled: false}
-  afp_search: {enabled: false}  # arrives in Phase 3, has no effect yet
-  web_search: {enabled: false}  # arrives in Phase 3, has no effect yet
+  afp_search: {enabled: false}  # not implemented yet, has no effect
+  web_search: {enabled: false}  # not implemented yet, has no effect
 
 auth:
   mode: single_user

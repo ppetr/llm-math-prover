@@ -1,12 +1,14 @@
-# isabelle image (Phase 1)
+# isabelle image
 
 Builds Isabelle/HOL + the Archive of Formal Proofs into one image and starts
 `isabelle server` as its entrypoint.
 
-Not yet wired into `compose.yaml` - the builder only generates `webui` and
-`llm-gateway` so far (Phase 0). This image is a standalone build until the
-agent (Phase 2) exists to run alongside it as a `network_mode: "service:isabelle"`
-sidecar, per the design doc's §2 networking note.
+Built standalone with `docker build` (below), not by the builder - the
+generated `compose.yaml` only references it by image name
+(`tools.isabelle.enabled: true` in `config.yaml`; see the top-level
+[README.md](../README.md)). It runs as the agent's
+`network_mode: "service:isabelle"` sidecar, per the design doc's §2
+networking note.
 
 ## Build
 
