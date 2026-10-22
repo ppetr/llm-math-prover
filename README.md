@@ -96,3 +96,10 @@ no arguments for the full usage.
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest
 ```
+
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE).
+
+This is a personal project, independent of, and not endorsed or sponsored
+by, any current or former employer of the author.
