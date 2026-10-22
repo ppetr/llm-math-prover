@@ -124,7 +124,10 @@ def isabelle_sidecar():
     try:
         yield name, server_info_vol, workspace_vol
     finally:
-        subprocess.run(["docker", "kill", name], capture_output=True)
+        # rm -f, not kill: kill returns as soon as the signal is delivered,
+        # before the --rm container is actually gone, so the volume removal
+        # right after it can race and silently fail with "volume in use".
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
         subprocess.run(["docker", "volume", "rm", server_info_vol], capture_output=True)
         subprocess.run(["docker", "volume", "rm", workspace_vol], capture_output=True)
 

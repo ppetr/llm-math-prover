@@ -115,7 +115,9 @@ def isabelle_container():
         _wait_until_server_ready(name)
         yield name
     finally:
-        subprocess.run(["docker", "kill", name], capture_output=True)
+        # rm -f, not kill: kill only signals the container, it doesn't wait
+        # for the --rm container to actually be gone before returning.
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
 def _wait_until_execable(container: str, timeout: float = 15) -> None:
