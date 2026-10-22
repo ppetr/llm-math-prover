@@ -1,39 +1,27 @@
-# ai-math-container
+# LLM agent that proves theorems with a real Isabelle/HOL kernel
+
+*Personal project, independent of, and not endorsed or sponsored by, any
+current or former employer of the author.*
 
 A config-driven Docker/Podman stack that wires a cloud LLM (Claude, GPT, or
-Gemini) to a real Isabelle/HOL proof checker through tool-calling: the LLM
-can propose a theory, but it only counts as proved once Isabelle's kernel
-actually accepts it. See
+Gemini) to Isabelle/HOL through tool-calling: the LLM can propose a theory,
+but it only counts as proved once Isabelle's kernel actually accepts it. See
 [docs/design/isabelle-agent-stack.md](docs/design/isabelle-agent-stack.md)
 for the architecture and rationale; this README only covers installing,
 configuring, and running it.
 
-## Quick start
+## Setup
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install -e .
 
-cp config.example.yaml config.yaml   # fill in a real model id
-.venv/bin/python -m builder.render config.yaml --out dist
-cp .env.example dist/.env            # fill in the matching API key(s)
-
-cd dist && docker compose up
-# or, once Podman is available: podman compose up
+cp config.example.yaml config.yaml
 ```
 
-Open WebUI comes up on `http://localhost:8080`, the LiteLLM gateway on
-`http://localhost:4000`. Verify LaTeX rendering by sending a message
-containing `$$\int_0^1 x^2\,dx = \tfrac13$$` in the chat.
-
-This base setup is just Open WebUI talking to your chosen LLM through
-LiteLLM - no Isabelle yet.
-
-## Enabling the Isabelle proof-checking tool
-
-Build the Isabelle image (see [isabelle/README.md](isabelle/README.md) for
-what it contains and host requirements) and the agent image, set
-`tools.isabelle.enabled: true` in `config.yaml`, re-render, and fill in
-`AGENT_SIGNING_SECRET` in `dist/.env` (`openssl rand -hex 32`):
+Edit `config.yaml`: enable one LLM backend with a real model id, and set
+`tools.isabelle.enabled: true`. Then build the two images the generated
+stack will reference by name (see [isabelle/README.md](isabelle/README.md)
+for what the first one contains and host requirements):
 
 ```sh
 docker build -t isabelle-afp isabelle/                           # see isabelle/README.md
@@ -46,10 +34,26 @@ isabelle/README.md *before* the first `docker compose up` - otherwise
 compose creates them as ordinary (COW) volumes and the btrfs/SQLite-WAL
 hang that fix exists for can come back.
 
-Once up, webui talks to the agent instead of llm-gateway directly. Ask it
-to check a theory and it calls the `isabelle_check_theory` tool, which only
-reports success if the Isabelle kernel actually accepted the proof; a
-verified theory is saved and offered back as a downloadable `.thy` file.
+```sh
+.venv/bin/python -m builder.render config.yaml --out dist
+cp .env.example dist/.env
+```
+
+Fill in `dist/.env`: the API key for the backend you enabled, a
+`LITELLM_MASTER_KEY`, and `AGENT_SIGNING_SECRET` (`openssl rand -hex 32`).
+Then:
+
+```sh
+cd dist && docker compose up
+# or, once Podman is available: podman compose up
+```
+
+Open WebUI comes up on `http://localhost:8080`, talking to the agent (not
+straight to the LLM). Ask it to check a theory and it calls the
+`isabelle_check_theory` tool, which only reports success if the Isabelle
+kernel actually accepted the proof; a verified theory is saved and offered
+back as a downloadable `.thy` file. Verify LaTeX rendering separately by
+sending a message containing `$$\int_0^1 x^2\,dx = \tfrac13$$` in the chat.
 
 ## Optional: CLI client (OpenCode)
 
@@ -116,6 +120,3 @@ no arguments for the full usage.
 ## License
 
 Apache License 2.0 - see [LICENSE](LICENSE).
-
-This is a personal project, independent of, and not endorsed or sponsored
-by, any current or former employer of the author.
